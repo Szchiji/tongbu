@@ -1,4 +1,4 @@
-# bot.py  —— 直接复制到 Render 就能跑
+# bot.py  —— 终极版：添加多管理员支持
 from pyrogram import Client, filters, types
 from pyrogram.types import ChatPrivileges
 import asyncio
@@ -15,26 +15,64 @@ SYNC_GROUPS = set()          # 自动保存同步群
 REQUIRED_CHANNELS = []       # 强制关注的频道列表
 WELCOME_TEXT = "欢迎！请先关注以下频道才能发言，关注完成后自动解禁～"
 
-# 主人ID（防止别人乱玩）
+# 管理员列表（初始只放您的 OWNER_ID）
 OWNER_ID = int(os.getenv("OWNER_ID"))
+ADMINS = [OWNER_ID]  # 支持多个，动态添加
 
-# —— 命令区 ——
-@app.on_message(filters.private & filters.command("addall") & filters.user(OWNER_ID))
+# —— 新命令：添加/删除管理员 ——
+@app.on_message(filters.private & filters.command("addadmin") & filters.user(ADMINS))
+async def add_admin(c, m):
+    if len(m.text.split()) < 2:
+        return await m.reply("用法: /addadmin 用户ID 或 @用户名")
+    target = m.text.split()[1]
+    if target.startswith("@"):
+        try:
+            user = await c.get_users(target)
+            user_id = user.id
+        except:
+            return await m.reply("找不到这个用户！")
+    else:
+        user_id = int(target)
+    
+    if user_id in ADMINS:
+        return await m.reply("已经是管理员了！")
+    ADMINS.append(user_id)
+    await m.reply(f"已添加 {user_id} 为管理员！")
+
+@app.on_message(filters.private & filters.command("deladmin") & filters.user(ADMINS))
+async def del_admin(c, m):
+    if len(m.text.split()) < 2:
+        return await m.reply("用法: /deladmin 用户ID")
+    user_id = int(m.text.split()[1])
+    if user_id == OWNER_ID:
+        return await m.reply("不能删除主人！")
+    if user_id in ADMINS:
+        ADMINS.remove(user_id)
+        await m.reply(f"已移除 {user_id} 的管理员权限！")
+    else:
+        await m.reply("不是管理员！")
+
+@app.on_message(filters.private & filters.command("listadmins") & filters.user(ADMINS))
+async def list_admins(c, m):
+    await m.reply(f"当前管理员列表：{ADMINS}")
+
+# —— 其他命令改成 filters.user(ADMINS) 限制多管理员 ——
+@app.on_message(filters.private & filters.command("addall") & filters.user(ADMINS))
 async def add_all_groups(c, m):
     async for dialog in c.get_dialogs():
         if dialog.chat.type in ["supergroup", "group"]:
             SYNC_GROUPS.add(dialog.chat.id)
     await m.reply(f"已自动添加 {len(SYNC_GROUPS)} 个群到同步列表！")
 
-@app.on_message(filters.private & filters.command("setchannel") & filters.user(OWNER_ID))
+@app.on_message(filters.private & filters.command("setchannel") & filters.user(ADMINS))
 async def set_channels(c, m):
     global REQUIRED_CHANNELS
     REQUIRED_CHANNELS = m.text.split()[1:]
     await m.reply(f"强制关注频道已更新为：{REQUIRED_CHANNELS or '无'}")
 
-@app.on_message(filters.private & filters.command("status") & filters.user(OWNER_ID))
+@app.on_message(filters.private & filters.command("status") & filters.user(ADMINS))
 async def status(c, m):
-    await m.reply(f"同步群数量：{len(SYNC_GROUPS)}\n强制频道：{REQUIRED_CHANNELS or '无'}")
+    await m.reply(f"同步群数量：{len(SYNC_GROUPS)}\n强制频道：{REQUIRED_CHANNELS or '无'}\n管理员：{ADMINS}")
 
 # —— 检查是否关注所有频道 ——
 async def is_subscribed(user_id):
@@ -104,5 +142,5 @@ async def sync_delete(c, chat, msg_ids):
         if gid != chat.id:
             await c.delete_messages(gid, msg_ids)
 
-print("10群同步 + 强制关注机器人已启动！")
+print("10群同步 + 强制关注 + 多管理员机器人已启动！")
 app.run()
