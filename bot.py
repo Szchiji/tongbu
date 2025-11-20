@@ -1,4 +1,4 @@
-# bot.py  —— 支持 Web Service 版本：添加 Flask HTTP 服务器
+# bot.py  —— 支持 Web Service 版本：添加 Flask HTTP 服务器 + 无上限群同步
 from pyrogram import Client, filters, types
 from pyrogram.types import ChatPrivileges
 import asyncio
@@ -13,7 +13,7 @@ app_tg = Client(  # 改名，避免和 Flask 冲突
     bot_token=os.getenv("BOT_TOKEN", None)  # 不填就用用户号
 )
 
-SYNC_GROUPS = set()          # 自动保存同步群
+SYNC_GROUPS = set()          # 自动保存同步群，无上限
 REQUIRED_CHANNELS = []       # 强制关注的频道列表
 WELCOME_TEXT = "欢迎！请先关注以下频道才能发言，关注完成后自动解禁～"
 
@@ -57,6 +57,26 @@ async def del_admin(c, m):
 @app_tg.on_message(filters.private & filters.command("listadmins") & filters.user(ADMINS))
 async def list_admins(c, m):
     await m.reply(f"当前管理员列表：{ADMINS}")
+
+# —— 手动添加/删除单个群（支持无限群） ——
+@app_tg.on_message(filters.private & filters.command("addgroup") & filters.user(ADMINS))
+async def add_group(c, m):
+    if len(m.text.split()) < 2:
+        return await m.reply("用法: /addgroup -100群ID")
+    group_id = int(m.text.split()[1])
+    SYNC_GROUPS.add(group_id)
+    await m.reply(f"已添加群 {group_id} 到同步列表！当前总 {len(SYNC_GROUPS)} 个。")
+
+@app_tg.on_message(filters.private & filters.command("removegroup") & filters.user(ADMINS))
+async def remove_group(c, m):
+    if len(m.text.split()) < 2:
+        return await m.reply("用法: /removegroup -100群ID")
+    group_id = int(m.text.split()[1])
+    if group_id in SYNC_GROUPS:
+        SYNC_GROUPS.remove(group_id)
+        await m.reply(f"已移除群 {group_id}！当前总 {len(SYNC_GROUPS)} 个。")
+    else:
+        await m.reply("不在列表中！")
 
 # —— 其他命令改成 filters.user(ADMINS) 限制多管理员 ——
 @app_tg.on_message(filters.private & filters.command("addall") & filters.user(ADMINS))
@@ -166,5 +186,5 @@ def run_flask():
 # 启动 Flask 在后台线程
 threading.Thread(target=run_flask, daemon=True).start()
 
-print("10群同步 + 强制关注 + 多管理员机器人已启动！（Web Service 模式）")
+print("无限群同步 + 强制关注 + 多管理员机器人已启动！（Web Service 模式）")
 app_tg.run()
