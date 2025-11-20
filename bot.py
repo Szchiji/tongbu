@@ -1,4 +1,4 @@
-# bot.py  —— 终极版：添加多管理员支持
+# bot.py  —— 终极版：添加多管理员支持 + 修复 set 问题
 from pyrogram import Client, filters, types
 from pyrogram.types import ChatPrivileges
 import asyncio
@@ -99,9 +99,8 @@ async def handle_new_member(c, update):
             # 发私信按钮
             buttons = []
             for ch in REQUIRED_CHANNELS:
-                if ch.startswith("@"):
-                    ch = ch[1:]
-                buttons.append([types.InlineKeyboardButton(f"关注 {ch}", url=f"https://t.me/{ch.lstrip('@')}")])
+                ch_name = ch.lstrip('@')
+                buttons.append([types.InlineKeyboardButton(f"关注 {ch_name}", url=f"https://t.me/{ch_name}")])
             buttons.append([types.InlineKeyboardButton("已关注，点我解禁", callback_data="check_sub")])
             await app.send_message(new.user.id, WELCOME_TEXT, reply_markup=types.InlineKeyboardMarkup(buttons))
 
@@ -109,7 +108,7 @@ async def handle_new_member(c, update):
 @app.on_callback_query(filters.regex("check_sub"))
 async def check_and_unban(c, cq):
     if await is_subscribed(cq.from_user.id):
-        for gid in SYNC_GROUPS:
+        for gid in list(SYNC_GROUPS):
             try:
                 await app.restrict_chat_member(gid, cq.from_user.id, ChatPrivileges(can_send_messages=True))
             except: pass
@@ -119,7 +118,7 @@ async def check_and_unban(c, cq):
         await cq.answer("检测到你还没关注完哦～", show_alert=True)
 
 # —— 核心同步（发消息、删、编辑全同步）——
-@app.on_message(filters.chat(SYNC_GROUPS))
+@app.on_message(filters.chat(list(SYNC_GROUPS)))
 async def sync_message(c, m):
     if m.from_user.id == (await c.get_me()).id:
         return
@@ -128,19 +127,28 @@ async def sync_message(c, m):
         return
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
-            await m.copy(gid)
+            try:
+                await m.copy(gid)
+            except Exception as e:
+                print(f"Copy failed: {e}")
 
-@app.on_edited_message(filters.chat(SYNC_GROUPS))
+@app.on_edited_message(filters.chat(list(SYNC_GROUPS)))
 async def sync_edit(c, m):
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
-            await m.copy(gid)
+            try:
+                await m.copy(gid)
+            except Exception as e:
+                print(f"Edit failed: {e}")
 
-@app.on_deleted_messages(filters.chat(SYNC_GROUPS))
+@app.on_deleted_messages(filters.chat(list(SYNC_GROUPS)))
 async def sync_delete(c, chat, msg_ids):
     for gid in list(SYNC_GROUPS):
         if gid != chat.id:
-            await c.delete_messages(gid, msg_ids)
+            try:
+                await c.delete_messages(gid, msg_ids)
+            except Exception as e:
+                print(f"Delete failed: {e}")
 
 print("10群同步 + 强制关注 + 多管理员机器人已启动！")
 app.run()
