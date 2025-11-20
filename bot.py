@@ -1,10 +1,12 @@
-# bot.py  —— 终极版：添加多管理员支持 + 修复 set 问题
+# bot.py  —— 支持 Web Service 版本：添加 Flask HTTP 服务器
 from pyrogram import Client, filters, types
 from pyrogram.types import ChatPrivileges
 import asyncio
 import os
+import threading  # 用于后台运行 Flask
+from flask import Flask  # 新增：Flask 库
 
-app = Client(
+app_tg = Client(  # 改名，避免和 Flask 冲突
     "tg_sync_bot",
     api_id=int(os.getenv("API_ID")),
     api_hash=os.getenv("API_HASH"),
@@ -20,7 +22,7 @@ OWNER_ID = int(os.getenv("OWNER_ID"))
 ADMINS = [OWNER_ID]  # 支持多个，动态添加
 
 # —— 新命令：添加/删除管理员 ——
-@app.on_message(filters.private & filters.command("addadmin") & filters.user(ADMINS))
+@app_tg.on_message(filters.private & filters.command("addadmin") & filters.user(ADMINS))
 async def add_admin(c, m):
     if len(m.text.split()) < 2:
         return await m.reply("用法: /addadmin 用户ID 或 @用户名")
@@ -39,7 +41,7 @@ async def add_admin(c, m):
     ADMINS.append(user_id)
     await m.reply(f"已添加 {user_id} 为管理员！")
 
-@app.on_message(filters.private & filters.command("deladmin") & filters.user(ADMINS))
+@app_tg.on_message(filters.private & filters.command("deladmin") & filters.user(ADMINS))
 async def del_admin(c, m):
     if len(m.text.split()) < 2:
         return await m.reply("用法: /deladmin 用户ID")
@@ -52,25 +54,25 @@ async def del_admin(c, m):
     else:
         await m.reply("不是管理员！")
 
-@app.on_message(filters.private & filters.command("listadmins") & filters.user(ADMINS))
+@app_tg.on_message(filters.private & filters.command("listadmins") & filters.user(ADMINS))
 async def list_admins(c, m):
     await m.reply(f"当前管理员列表：{ADMINS}")
 
 # —— 其他命令改成 filters.user(ADMINS) 限制多管理员 ——
-@app.on_message(filters.private & filters.command("addall") & filters.user(ADMINS))
+@app_tg.on_message(filters.private & filters.command("addall") & filters.user(ADMINS))
 async def add_all_groups(c, m):
     async for dialog in c.get_dialogs():
         if dialog.chat.type in ["supergroup", "group"]:
             SYNC_GROUPS.add(dialog.chat.id)
     await m.reply(f"已自动添加 {len(SYNC_GROUPS)} 个群到同步列表！")
 
-@app.on_message(filters.private & filters.command("setchannel") & filters.user(ADMINS))
+@app_tg.on_message(filters.private & filters.command("setchannel") & filters.user(ADMINS))
 async def set_channels(c, m):
     global REQUIRED_CHANNELS
     REQUIRED_CHANNELS = m.text.split()[1:]
     await m.reply(f"强制关注频道已更新为：{REQUIRED_CHANNELS or '无'}")
 
-@app.on_message(filters.private & filters.command("status") & filters.user(ADMINS))
+@app_tg.on_message(filters.private & filters.command("status") & filters.user(ADMINS))
 async def status(c, m):
     await m.reply(f"同步群数量：{len(SYNC_GROUPS)}\n强制频道：{REQUIRED_CHANNELS or '无'}\n管理员：{ADMINS}")
 
@@ -80,19 +82,19 @@ async def is_subscribed(user_id):
         return True
     for ch in REQUIRED_CHANNELS:
         try:
-            await app.get_chat_member(ch, user_id)
+            await app_tg.get_chat_member(ch, user_id)
         except:
             return False
     return True
 
 # —— 新成员入群自动禁言+发按钮 ——
-@app.on_chat_member_updated()
+@app_tg.on_chat_member_updated()
 async def handle_new_member(c, update):
     new = update.new_chat_member
     if new and new.status in ["member", "administrator"] and new.user.id != (await c.get_me()).id:
         if update.chat.id in SYNC_GROUPS and not await is_subscribed(new.user.id):
             # 禁言
-            await app.restrict_chat_member(
+            await app_tg.restrict_chat_member(
                 update.chat.id, new.user.id,
                 ChatPrivileges(can_send_messages=False)
             )
@@ -102,23 +104,23 @@ async def handle_new_member(c, update):
                 ch_name = ch.lstrip('@')
                 buttons.append([types.InlineKeyboardButton(f"关注 {ch_name}", url=f"https://t.me/{ch_name}")])
             buttons.append([types.InlineKeyboardButton("已关注，点我解禁", callback_data="check_sub")])
-            await app.send_message(new.user.id, WELCOME_TEXT, reply_markup=types.InlineKeyboardMarkup(buttons))
+            await app_tg.send_message(new.user.id, WELCOME_TEXT, reply_markup=types.InlineKeyboardMarkup(buttons))
 
 # —— 用户点“已关注”按钮后检查并解禁 ——
-@app.on_callback_query(filters.regex("check_sub"))
+@app_tg.on_callback_query(filters.regex("check_sub"))
 async def check_and_unban(c, cq):
     if await is_subscribed(cq.from_user.id):
         for gid in list(SYNC_GROUPS):
             try:
-                await app.restrict_chat_member(gid, cq.from_user.id, ChatPrivileges(can_send_messages=True))
+                await app_tg.restrict_chat_member(gid, cq.from_user.id, ChatPrivileges(can_send_messages=True))
             except: pass
         await cq.answer("解禁成功！欢迎发言～", show_alert=True)
-        await app.send_message(cq.from_user.id, "已解禁所有同步群！")
+        await app_tg.send_message(cq.from_user.id, "已解禁所有同步群！")
     else:
         await cq.answer("检测到你还没关注完哦～", show_alert=True)
 
 # —— 核心同步（发消息、删、编辑全同步）——
-@app.on_message(filters.chat(list(SYNC_GROUPS)))
+@app_tg.on_message(filters.chat(list(SYNC_GROUPS)))
 async def sync_message(c, m):
     if m.from_user.id == (await c.get_me()).id:
         return
@@ -132,7 +134,7 @@ async def sync_message(c, m):
             except Exception as e:
                 print(f"Copy failed: {e}")
 
-@app.on_edited_message(filters.chat(list(SYNC_GROUPS)))
+@app_tg.on_edited_message(filters.chat(list(SYNC_GROUPS)))
 async def sync_edit(c, m):
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
@@ -141,7 +143,7 @@ async def sync_edit(c, m):
             except Exception as e:
                 print(f"Edit failed: {e}")
 
-@app.on_deleted_messages(filters.chat(list(SYNC_GROUPS)))
+@app_tg.on_deleted_messages(filters.chat(list(SYNC_GROUPS)))
 async def sync_delete(c, chat, msg_ids):
     for gid in list(SYNC_GROUPS):
         if gid != chat.id:
@@ -150,5 +152,19 @@ async def sync_delete(c, chat, msg_ids):
             except Exception as e:
                 print(f"Delete failed: {e}")
 
-print("10群同步 + 强制关注 + 多管理员机器人已启动！")
-app.run()
+# 新增：Flask HTTP 服务器，让 Render Web Service 检测到端口
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health_check():
+    return "Bot is running!", 200  # 返回健康响应
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))  # Render 默认端口 10000
+    flask_app.run(host='0.0.0.0', port=port)
+
+# 启动 Flask 在后台线程
+threading.Thread(target=run_flask, daemon=True).start()
+
+print("10群同步 + 强制关注 + 多管理员机器人已启动！（Web Service 模式）")
+app_tg.run()
