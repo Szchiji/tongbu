@@ -7,6 +7,7 @@ import json
 import logging
 import threading  # 用于后台运行 Flask
 from flask import Flask  # 新增：Flask 库
+import redis  # Redis 数据库
 
 # Configure logging
 logging.basicConfig(
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 # Data persistence file path
 DATA_FILE = "bot_data.json"
+
+# Redis connection
+REDIS_URL = os.getenv("REDIS_URL")
+r = redis.from_url(REDIS_URL) if REDIS_URL else None
 
 app_tg = Client(  # 改名，避免和 Flask 冲突
     "tg_sync_bot",
@@ -37,28 +42,86 @@ ADMINS = [OWNER_ID]  # 支持多个，动态添加
 BOT_ID = None
 
 # —— Data Persistence Functions ——
+def save_sync_groups():
+    """Save sync groups to Redis or JSON file"""
+    if r:
+        try:
+            r.set("sync_groups", json.dumps(list(SYNC_GROUPS)))
+            logger.info("Sync groups saved to Redis")
+        except Exception as e:
+            logger.error(f"Error saving sync groups to Redis: {e}")
+    else:
+        save_data()
+
+def save_admins():
+    """Save admins to Redis or JSON file"""
+    if r:
+        try:
+            r.set("admins", json.dumps(ADMINS))
+            logger.info("Admins saved to Redis")
+        except Exception as e:
+            logger.error(f"Error saving admins to Redis: {e}")
+    else:
+        save_data()
+
+def save_channels():
+    """Save channels to Redis or JSON file"""
+    if r:
+        try:
+            r.set("channels", json.dumps(REQUIRED_CHANNELS))
+            logger.info("Channels saved to Redis")
+        except Exception as e:
+            logger.error(f"Error saving channels to Redis: {e}")
+    else:
+        save_data()
+
 def load_data():
-    """Load persistent data from JSON file"""
+    """Load persistent data from Redis or JSON file"""
     global SYNC_GROUPS, REQUIRED_CHANNELS, ADMINS
-    try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, 'r') as f:
-                data = json.load(f)
-                SYNC_GROUPS = set(data.get('sync_groups', []))
-                REQUIRED_CHANNELS = data.get('required_channels', [])
-                ADMINS = data.get('admins', [OWNER_ID])
+    if r:
+        # Load from Redis
+        try:
+            data = r.get("sync_groups")
+            if data:
+                SYNC_GROUPS = set(json.loads(data))
+            data = r.get("admins")
+            if data:
+                loaded_admins = json.loads(data)
                 # Ensure OWNER_ID is always in ADMINS
-                if OWNER_ID not in ADMINS:
-                    ADMINS.append(OWNER_ID)
-                logger.info(f"Loaded data: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins")
-        else:
-            logger.info("No data file found, starting with defaults")
-    except Exception as e:
-        logger.error(f"Error loading data: {e}")
-        # Use defaults
-        SYNC_GROUPS = set()
-        REQUIRED_CHANNELS = []
-        ADMINS = [OWNER_ID]
+                if OWNER_ID not in loaded_admins:
+                    loaded_admins.insert(0, OWNER_ID)
+                ADMINS = loaded_admins
+            data = r.get("channels")
+            if data:
+                REQUIRED_CHANNELS = json.loads(data)
+            logger.info(f"Loaded data from Redis: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins")
+        except Exception as e:
+            logger.error(f"Error loading data from Redis: {e}")
+            # Use defaults
+            SYNC_GROUPS = set()
+            REQUIRED_CHANNELS = []
+            ADMINS = [OWNER_ID]
+    else:
+        # Load from JSON file (fallback for local testing)
+        try:
+            if os.path.exists(DATA_FILE):
+                with open(DATA_FILE, 'r') as f:
+                    data = json.load(f)
+                    SYNC_GROUPS = set(data.get('sync_groups', []))
+                    REQUIRED_CHANNELS = data.get('required_channels', [])
+                    ADMINS = data.get('admins', [OWNER_ID])
+                    # Ensure OWNER_ID is always in ADMINS
+                    if OWNER_ID not in ADMINS:
+                        ADMINS.append(OWNER_ID)
+                    logger.info(f"Loaded data from JSON: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins")
+            else:
+                logger.info("No data file found, starting with defaults")
+        except Exception as e:
+            logger.error(f"Error loading data from JSON: {e}")
+            # Use defaults
+            SYNC_GROUPS = set()
+            REQUIRED_CHANNELS = []
+            ADMINS = [OWNER_ID]
 
 def save_data():
     """Save persistent data to JSON file"""
@@ -93,7 +156,7 @@ async def add_admin(c, m):
     if user_id in ADMINS:
         return await m.reply("已经是管理员了！")
     ADMINS.append(user_id)
-    save_data()
+    save_admins()
     await m.reply(f"已添加 {user_id} 为管理员！")
 
 @app_tg.on_message(filters.private & filters.command("deladmin") & filters.user(ADMINS))
@@ -105,7 +168,7 @@ async def del_admin(c, m):
         return await m.reply("不能删除主人！")
     if user_id in ADMINS:
         ADMINS.remove(user_id)
-        save_data()
+        save_admins()
         await m.reply(f"已移除 {user_id} 的管理员权限！")
     else:
         await m.reply("不是管理员！")
@@ -121,7 +184,7 @@ async def add_group(c, m):
         return await m.reply("用法: /addgroup -100群ID")
     group_id = int(m.text.split()[1])
     SYNC_GROUPS.add(group_id)
-    save_data()
+    save_sync_groups()
     await m.reply(f"已添加群 {group_id} 到同步列表！当前总 {len(SYNC_GROUPS)} 个。")
 
 @app_tg.on_message(filters.private & filters.command("removegroup") & filters.user(ADMINS))
@@ -131,7 +194,7 @@ async def remove_group(c, m):
     group_id = int(m.text.split()[1])
     if group_id in SYNC_GROUPS:
         SYNC_GROUPS.remove(group_id)
-        save_data()
+        save_sync_groups()
         await m.reply(f"已移除群 {group_id}！当前总 {len(SYNC_GROUPS)} 个。")
     else:
         await m.reply("不在列表中！")
@@ -142,14 +205,14 @@ async def add_all_groups(c, m):
     async for dialog in c.get_dialogs():
         if dialog.chat.type in ["supergroup", "group"]:
             SYNC_GROUPS.add(dialog.chat.id)
-    save_data()
+    save_sync_groups()
     await m.reply(f"已自动添加 {len(SYNC_GROUPS)} 个群到同步列表！")
 
 @app_tg.on_message(filters.private & filters.command("setchannel") & filters.user(ADMINS))
 async def set_channels(c, m):
     global REQUIRED_CHANNELS
     REQUIRED_CHANNELS = m.text.split()[1:]
-    save_data()
+    save_channels()
     await m.reply(f"强制关注频道已更新为：{REQUIRED_CHANNELS or '无'}")
 
 @app_tg.on_message(filters.private & filters.command("status") & filters.user(ADMINS))
