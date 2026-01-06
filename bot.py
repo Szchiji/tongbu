@@ -111,9 +111,9 @@ def add_message_mapping(original_chat_id, original_msg_id, target_chat_id, targe
         MESSAGE_MAPPING[key] = {}
     # Store as integer for consistency
     MESSAGE_MAPPING[key][str(target_chat_id)] = int(target_msg_id)
-    # Save periodically (every 10 new mappings) to avoid excessive I/O
+    # Save periodically (every 5 new mappings) to reduce risk of data loss
     MESSAGE_MAPPING_COUNTER += 1
-    if MESSAGE_MAPPING_COUNTER >= 10:
+    if MESSAGE_MAPPING_COUNTER >= 5:
         save_message_mapping()
         MESSAGE_MAPPING_COUNTER = 0
 
@@ -333,7 +333,7 @@ async def sync_edit(c, m):
                 if target_msg_id:
                     try:
                         # Determine message type and use appropriate edit method
-                        if m.media and m.caption is not None:
+                        if m.media and m.caption:
                             # It's a media message with caption
                             await c.edit_message_caption(
                                 chat_id=gid,
