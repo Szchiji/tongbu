@@ -333,12 +333,12 @@ async def sync_edit(c, m):
                 if target_msg_id:
                     try:
                         # Determine message type and use appropriate edit method
-                        if m.media and m.caption:
-                            # It's a media message with caption
+                        if m.media:
+                            # It's a media message - edit caption (can be empty or None)
                             await c.edit_message_caption(
                                 chat_id=gid,
                                 message_id=target_msg_id,
-                                caption=m.caption
+                                caption=m.caption or ""
                             )
                             logger.info(f"Edited caption of message {target_msg_id} in {gid}")
                         elif m.text:
@@ -350,8 +350,8 @@ async def sync_edit(c, m):
                             )
                             logger.info(f"Edited text of message {target_msg_id} in {gid}")
                         else:
-                            # Can't edit this type of message, copy as new
-                            raise Exception("Message type cannot be edited")
+                            # Message type cannot be edited (e.g., stickers, files without text/caption changes)
+                            raise Exception("Message type does not support editing, will copy as new")
                     except Exception as e:
                         # If edit fails (e.g., message type changed), copy as new
                         logger.warning(f"Edit failed for {gid}, copying as new: {e}")
