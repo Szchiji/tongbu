@@ -39,6 +39,7 @@ BOT_ID = None
 
 # Message ID mapping: {original_chat_id:original_msg_id: {target_chat_id: target_msg_id, ...}}
 MESSAGE_MAPPING = {}
+MESSAGE_MAPPING_COUNTER = 0  # Counter for periodic saves
 
 # —— Data Persistence Functions ——
 def load_data():
@@ -104,13 +105,17 @@ def save_message_mapping():
 
 def add_message_mapping(original_chat_id, original_msg_id, target_chat_id, target_msg_id):
     """Add a message ID mapping"""
+    global MESSAGE_MAPPING_COUNTER
     key = f"{original_chat_id}:{original_msg_id}"
     if key not in MESSAGE_MAPPING:
         MESSAGE_MAPPING[key] = {}
-    MESSAGE_MAPPING[key][str(target_chat_id)] = target_msg_id
-    # Save periodically (every 10 mappings) to avoid excessive I/O
-    if len(MESSAGE_MAPPING) % 10 == 0:
+    # Store as integer for consistency
+    MESSAGE_MAPPING[key][str(target_chat_id)] = int(target_msg_id)
+    # Save periodically (every 10 new mappings) to avoid excessive I/O
+    MESSAGE_MAPPING_COUNTER += 1
+    if MESSAGE_MAPPING_COUNTER >= 10:
         save_message_mapping()
+        MESSAGE_MAPPING_COUNTER = 0
 
 def get_message_mapping(original_chat_id, original_msg_id):
     """Get message ID mappings for an original message"""
@@ -327,12 +332,12 @@ async def sync_edit(c, m):
                 target_msg_id = mapping.get(str(gid))
                 if target_msg_id:
                     try:
-                        # Determine if it's a media message with caption or text message
-                        if m.caption:
+                        # Determine message type and use appropriate edit method
+                        if m.media and m.caption is not None:
                             # It's a media message with caption
                             await c.edit_message_caption(
                                 chat_id=gid,
-                                message_id=int(target_msg_id),
+                                message_id=target_msg_id,
                                 caption=m.caption
                             )
                             logger.info(f"Edited caption of message {target_msg_id} in {gid}")
@@ -340,7 +345,7 @@ async def sync_edit(c, m):
                             # It's a text message
                             await c.edit_message_text(
                                 chat_id=gid,
-                                message_id=int(target_msg_id),
+                                message_id=target_msg_id,
                                 text=m.text
                             )
                             logger.info(f"Edited text of message {target_msg_id} in {gid}")
@@ -365,6 +370,9 @@ async def sync_delete(c, messages):
     if not messages:
         return
     
+    # Group messages by their original chat and collect mappings
+    delete_targets = {}  # {target_chat_id: [msg_ids]}
+    
     # Process each deleted message
     for m in messages:
         if m.chat.id not in SYNC_GROUPS:
@@ -374,21 +382,27 @@ async def sync_delete(c, messages):
         mapping = get_message_mapping(m.chat.id, m.id)
         
         if mapping:
-            # Delete the synced messages in other groups
+            # Collect target messages to delete
             for gid_str, target_msg_id in mapping.items():
                 gid = int(gid_str)
                 if gid != m.chat.id:
-                    try:
-                        await c.delete_messages(gid, int(target_msg_id))
-                        logger.info(f"Deleted synced message {target_msg_id} in {gid}")
-                    except Exception as e:
-                        logger.error(f"Delete sync failed to {gid}: {e}")
+                    if gid not in delete_targets:
+                        delete_targets[gid] = []
+                    delete_targets[gid].append(target_msg_id)
             
             # Clean up the mapping
             delete_message_mapping(m.chat.id, m.id)
         else:
             # No mapping found, just log it
             logger.info(f"Message {m.id} deleted in {m.chat.id}, but no mapping found")
+    
+    # Batch delete messages by group
+    for gid, msg_ids in delete_targets.items():
+        try:
+            await c.delete_messages(gid, msg_ids)
+            logger.info(f"Deleted {len(msg_ids)} synced message(s) in {gid}")
+        except Exception as e:
+            logger.error(f"Delete sync failed to {gid}: {e}")
 
 # 新增：Flask HTTP 服务器，让 Render Web Service 检测到端口
 flask_app = Flask(__name__)
