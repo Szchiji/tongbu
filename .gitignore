@@ -35,6 +35,7 @@ env/
 
 # Bot data persistence
 bot_data.json
+message_mapping.json
 
 # IDE
 .vscode/
