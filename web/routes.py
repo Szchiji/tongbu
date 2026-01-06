@@ -98,15 +98,6 @@ def setup_routes(app):
                 pass
         return redirect(url_for('admin_groups'))
     
-    @app.route('/admin/groups/addall', methods=['POST'])
-    @admin_required
-    def add_all_groups():
-        """Add all groups - Note: This is a placeholder, actual functionality via bot command"""
-        # Since we can't easily make async calls in Flask, users should use /addall command in bot
-        # This just redirects back with no action
-        # In a production setup, you could use task queues or other async mechanisms
-        return redirect(url_for('admin_groups'))
-    
     @app.route('/admin/channels')
     @admin_required
     def admin_channels():
