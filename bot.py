@@ -21,7 +21,15 @@ DATA_FILE = "bot_data.json"
 
 # Redis connection
 REDIS_URL = os.getenv("REDIS_URL")
-r = redis.from_url(REDIS_URL) if REDIS_URL else None
+r = None
+if REDIS_URL:
+    try:
+        r = redis.from_url(REDIS_URL)
+        logger.info("Redis connection initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize Redis connection: {e}")
+        logger.info("Falling back to JSON file storage")
+        r = None
 
 app_tg = Client(  # 改名，避免和 Flask 冲突
     "tg_sync_bot",
@@ -42,37 +50,31 @@ ADMINS = [OWNER_ID]  # 支持多个，动态添加
 BOT_ID = None
 
 # —— Data Persistence Functions ——
-def save_sync_groups():
-    """Save sync groups to Redis or JSON file"""
+def save_to_redis(key, value):
+    """Helper function to save data to Redis with error handling"""
     if r:
         try:
-            r.set("sync_groups", json.dumps(list(SYNC_GROUPS)))
-            logger.info("Sync groups saved to Redis")
+            r.set(key, json.dumps(value))
+            logger.info(f"{key} saved to Redis")
+            return True
         except Exception as e:
-            logger.error(f"Error saving sync groups to Redis: {e}")
-    else:
+            logger.error(f"Error saving {key} to Redis: {e}")
+            return False
+    return False
+
+def save_sync_groups():
+    """Save sync groups to Redis or JSON file"""
+    if not save_to_redis("sync_groups", list(SYNC_GROUPS)):
         save_data()
 
 def save_admins():
     """Save admins to Redis or JSON file"""
-    if r:
-        try:
-            r.set("admins", json.dumps(ADMINS))
-            logger.info("Admins saved to Redis")
-        except Exception as e:
-            logger.error(f"Error saving admins to Redis: {e}")
-    else:
+    if not save_to_redis("admins", ADMINS):
         save_data()
 
 def save_channels():
     """Save channels to Redis or JSON file"""
-    if r:
-        try:
-            r.set("channels", json.dumps(REQUIRED_CHANNELS))
-            logger.info("Channels saved to Redis")
-        except Exception as e:
-            logger.error(f"Error saving channels to Redis: {e}")
-    else:
+    if not save_to_redis("channels", REQUIRED_CHANNELS):
         save_data()
 
 def load_data():
@@ -89,7 +91,7 @@ def load_data():
                 loaded_admins = json.loads(data)
                 # Ensure OWNER_ID is always in ADMINS
                 if OWNER_ID not in loaded_admins:
-                    loaded_admins.insert(0, OWNER_ID)
+                    loaded_admins.append(OWNER_ID)
                 ADMINS = loaded_admins
             data = r.get("channels")
             if data:
