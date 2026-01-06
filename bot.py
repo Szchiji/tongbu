@@ -6,7 +6,9 @@ import os
 import json
 import logging
 import threading  # 用于后台运行 Flask
+import secrets
 from flask import Flask  # 新增：Flask 库
+import redis
 
 # Configure logging
 logging.basicConfig(
@@ -14,6 +16,18 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Redis client for token storage (optional)
+r = None
+try:
+    redis_url = os.getenv("REDIS_URL")
+    if redis_url:
+        r = redis.from_url(redis_url, decode_responses=False)
+        logger.info("Redis connected successfully")
+    else:
+        logger.warning("REDIS_URL not set, admin tokens will not work")
+except Exception as e:
+    logger.warning(f"Redis connection failed: {e}. Admin tokens will not work.")
 
 # Data persistence file path
 DATA_FILE = "bot_data.json"
@@ -113,6 +127,36 @@ async def del_admin(c, m):
 @app_tg.on_message(filters.private & filters.command("listadmins") & filters.user(ADMINS))
 async def list_admins(c, m):
     await m.reply(f"当前管理员列表：{ADMINS}")
+
+# —— Web 管理后台命令 ——
+@app_tg.on_message(filters.private & filters.command("admin"))
+async def admin_panel(c, m):
+    user_id = m.from_user.id
+    # 只有管理员才回复
+    if user_id not in ADMINS:
+        return  # 不是管理员，静默忽略，不回复任何内容
+    
+    # 生成一次性 Token
+    token = f"{user_id}:{secrets.token_urlsafe(32)}"
+    
+    # 存入 Redis，5分钟过期
+    if r:
+        r.setex(f"admin_token:{token}", 300, str(user_id))
+    else:
+        return await m.reply("⚠️ Redis 未配置，无法使用 Web 管理后台！\n请设置 REDIS_URL 环境变量。")
+    
+    # 获取后台 URL
+    base_url = os.getenv("BASE_URL", "").rstrip("/")
+    if not base_url:
+        return await m.reply("⚠️ 请先设置 BASE_URL 环境变量！\n例如：https://xxx.up.railway.app")
+    
+    admin_url = f"{base_url}/admin?token={token}"
+    
+    # 发送带按钮的消息
+    button = types.InlineKeyboardMarkup([
+        [types.InlineKeyboardButton("🖥️ 进入管理后台", url=admin_url)]
+    ])
+    await m.reply("点击下方按钮进入管理后台：\n\n⚠️ 链接5分钟内有效", reply_markup=button)
 
 # —— 手动添加/删除单个群（支持无限群） ——
 @app_tg.on_message(filters.private & filters.command("addgroup") & filters.user(ADMINS))
@@ -252,7 +296,13 @@ async def sync_delete(client, messages):
                 logger.error(f"Delete sync failed to {gid}: {e}")
 
 # 新增：Flask HTTP 服务器，让 Render Web Service 检测到端口
-flask_app = Flask(__name__)
+flask_app = Flask(__name__, template_folder='web/templates')
+
+# Set Flask secret key for sessions
+flask_app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))
+
+# Import and setup admin routes
+from web.routes import setup_routes, init_routes_context
 
 @flask_app.route('/')
 def health_check():
@@ -265,6 +315,10 @@ def run_flask():
 if __name__ == "__main__":
     # Load persistent data
     load_data()
+    
+    # Initialize admin routes with context
+    init_routes_context(r, ADMINS, SYNC_GROUPS, REQUIRED_CHANNELS, OWNER_ID, save_data, app_tg)
+    setup_routes(flask_app)
     
     # 启动 Flask 在后台线程
     threading.Thread(target=run_flask, daemon=True).start()

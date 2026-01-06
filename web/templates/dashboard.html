@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘 - 管理后台{% endblock %}
+
+{% block content %}
+<div class="stats">
+    <div class="stat-card">
+        <h3>{{ stats.groups }}</h3>
+        <p>同步群组</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ stats.channels }}</h3>
+        <p>强制频道</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ stats.admins }}</h3>
+        <p>管理员</p>
+    </div>
+</div>
+
+<div class="card">
+    <h2>📊 系统状态</h2>
+    <div class="alert alert-info">
+        <strong>欢迎使用管理后台！</strong><br>
+        当前登录管理员 ID: <strong>{{ session.admin_id }}</strong>
+    </div>
+    
+    <h3 style="color: #4ecca3; margin-top: 20px;">快速操作</h3>
+    <div style="margin-top: 15px;">
+        <a href="/admin/groups" class="btn" style="margin-right: 10px;">管理群组</a>
+        <a href="/admin/channels" class="btn" style="margin-right: 10px;">管理频道</a>
+        <a href="/admin/admins" class="btn">管理管理员</a>
+    </div>
+</div>
+
+<div class="card">
+    <h2>📝 最近同步群组列表</h2>
+    {% if recent_groups %}
+        {% for group_id in recent_groups %}
+        <div class="list-item">
+            <span>群组 ID: {{ group_id }}</span>
+        </div>
+        {% endfor %}
+        {% if stats.groups > 5 %}
+        <p style="color: #888; margin-top: 10px;">显示前 5 个群组，共 {{ stats.groups }} 个。<a href="/admin/groups" style="color: #4ecca3;">查看全部 →</a></p>
+        {% endif %}
+    {% else %}
+        <p style="color: #888;">暂无同步群组</p>
+    {% endif %}
+</div>
+{% endblock %}

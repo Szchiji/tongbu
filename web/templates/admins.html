@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}管理员管理 - 管理后台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>➕ 添加管理员</h2>
+    <form method="POST" action="/admin/admins/add">
+        <div class="form-group">
+            <label for="user_id">用户 ID 或 @用户名</label>
+            <input type="text" id="user_id" name="user_id" placeholder="123456789 或 @username" required>
+        </div>
+        <button type="submit">添加管理员</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>👥 当前管理员列表（共 {{ admins|length }} 人）</h2>
+    {% if admins %}
+        <div class="alert alert-info" style="margin-bottom: 20px;">
+            <strong>说明：</strong>管理员可以使用所有机器人命令，包括添加/删除群组、设置频道等。<br>
+            <strong>注意：</strong>主人（OWNER_ID）不能被删除。
+        </div>
+        {% for admin_id in admins %}
+        <div class="list-item">
+            <span>
+                用户 ID: {{ admin_id }}
+                {% if admin_id == owner_id %}
+                <span style="color: #4ecca3; font-weight: bold;">（主人）</span>
+                {% endif %}
+            </span>
+            {% if admin_id != owner_id %}
+            <form method="POST" action="/admin/admins/delete" style="display: inline;" onsubmit="return confirm('确定要删除此管理员吗？');">
+                <input type="hidden" name="user_id" value="{{ admin_id }}">
+                <button type="submit" class="btn-danger">删除</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    {% else %}
+        <p style="color: #888;">暂无管理员</p>
+    {% endif %}
+</div>
+{% endblock %}

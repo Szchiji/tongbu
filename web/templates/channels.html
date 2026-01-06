@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}频道管理 - 管理后台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>➕ 添加强制关注频道</h2>
+    <form method="POST" action="/admin/channels/add">
+        <div class="form-group">
+            <label for="channel">频道用户名（格式：@channelname 或 channelname）</label>
+            <input type="text" id="channel" name="channel" placeholder="@mychannel" required>
+        </div>
+        <button type="submit">添加频道</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>📋 当前强制关注频道列表（共 {{ channels|length }} 个）</h2>
+    {% if channels %}
+        <div class="alert alert-info" style="margin-bottom: 20px;">
+            <strong>说明：</strong>新用户加入群组时，必须先关注这些频道才能发言。
+        </div>
+        {% for channel in channels %}
+        <div class="list-item">
+            <span>{{ channel }}</span>
+            <form method="POST" action="/admin/channels/delete" style="display: inline;" onsubmit="return confirm('确定要删除此频道吗？');">
+                <input type="hidden" name="channel" value="{{ channel }}">
+                <button type="submit" class="btn-danger">删除</button>
+            </form>
+        </div>
+        {% endfor %}
+        <form method="POST" action="/admin/channels/clear" style="margin-top: 20px;" onsubmit="return confirm('确定要清空所有频道吗？');">
+            <button type="submit" class="btn-danger">清空所有频道</button>
+        </form>
+    {% else %}
+        <p style="color: #888;">暂无强制关注频道。不设置频道时，新用户可以直接发言。</p>
+    {% endif %}
+</div>
+{% endblock %}

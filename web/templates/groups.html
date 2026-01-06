@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}群组管理 - 管理后台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>➕ 添加群组</h2>
+    <form method="POST" action="/admin/groups/add">
+        <div class="form-group">
+            <label for="group_id">群组 ID（格式：-100xxxxxxxxxx）</label>
+            <input type="text" id="group_id" name="group_id" placeholder="-100123456789" required>
+        </div>
+        <button type="submit">添加群组</button>
+    </form>
+    
+    <form method="POST" action="/admin/groups/addall" style="margin-top: 15px;" onsubmit="return confirm('确定要添加所有群组吗？');">
+        <button type="submit">自动添加所有群组</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>📋 当前同步群组列表（共 {{ groups|length }} 个）</h2>
+    {% if groups %}
+        {% for group_id in groups %}
+        <div class="list-item">
+            <span>群组 ID: {{ group_id }}</span>
+            <form method="POST" action="/admin/groups/delete" style="display: inline;" onsubmit="return confirm('确定要删除此群组吗？');">
+                <input type="hidden" name="group_id" value="{{ group_id }}">
+                <button type="submit" class="btn-danger">删除</button>
+            </form>
+        </div>
+        {% endfor %}
+    {% else %}
+        <p style="color: #888;">暂无同步群组，请先添加群组。</p>
+    {% endif %}
+</div>
+{% endblock %}
