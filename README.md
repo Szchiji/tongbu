@@ -1,6 +1,6 @@
 # Telegram 群组同步机器人
 
-一个支持多群组消息同步、强制频道关注验证、多管理员管理的 Telegram 机器人，专为 Railway 平台部署优化。
+一个支持多群组消息同步、强制频道关注验证、多管理员管理、**Web 管理后台**的 Telegram 机器人，专为 Railway 平台部署优化。
 
 ## 功能特性
 
@@ -9,6 +9,7 @@
 - ✅ **消息实时同步**：同步新消息、编辑消息和删除消息
 - ✅ **强制频道关注**：新成员加群时自动禁言，关注指定频道后解禁
 - ✅ **多管理员支持**：支持动态添加/删除管理员
+- ✅ **Web 管理后台**：通过 Web 界面管理群组、频道和管理员（无需密码）
 - ✅ **Web Service 模式**：内置 Flask 服务器，支持 Railway/Render 等平台部署
 - ✅ **动态过滤器**：支持运行时动态添加群组，无需重启
 
@@ -39,6 +40,8 @@
    - `API_HASH`：你的 Telegram API Hash
    - `BOT_TOKEN`：你的机器人 Token
    - `OWNER_ID`：你的 Telegram 用户 ID
+   - `BASE_URL`：你的应用访问地址（如 `https://tongbu-xxx.up.railway.app`）
+   - `SECRET_KEY`：（可选）Flask Session 密钥，不填会自动生成
    - `PORT`：Railway 会自动注入，无需手动设置
    - `REDIS_URL`：Railway 添加 Redis 后会自动注入，无需手动设置
 7. 点击 "Deploy"
@@ -60,6 +63,7 @@ railway variables set API_ID=你的API_ID
 railway variables set API_HASH=你的API_HASH
 railway variables set BOT_TOKEN=你的BOT_TOKEN
 railway variables set OWNER_ID=你的用户ID
+railway variables set BASE_URL=https://你的应用地址.up.railway.app
 
 # 部署
 railway up
@@ -73,10 +77,14 @@ railway up
 | `API_HASH` | ✅ | Telegram API Hash | `0123456789abcdef0123456789abcdef` |
 | `BOT_TOKEN` | ✅ | 机器人 Token | `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11` |
 | `OWNER_ID` | ✅ | 主人用户 ID | `123456789` |
+| `BASE_URL` | ✅ | 后台访问地址（用于 Web 管理后台） | `https://tongbu-xxx.up.railway.app` |
+| `SECRET_KEY` | ⚡ | Flask Session 密钥（可选，不填自动生成） | `random_secret_key_here` |
 | `REDIS_URL` | ⚠️ | Redis 数据库连接 URL（Railway 自动注入） | `redis://default:password@host:port` |
 | `PORT` | ⚠️ | HTTP 服务端口（Railway 自动注入） | `10000` |
 
-**注意**：`REDIS_URL` 环境变量在 Railway 部署时会自动注入。如果不存在此变量，机器人会回退到使用本地 JSON 文件存储数据（适用于本地测试）。
+**注意**：
+- `REDIS_URL` 环境变量在 Railway 部署时会自动注入。如果不存在此变量，机器人会回退到使用本地 JSON 文件存储数据（适用于本地测试）。
+- `BASE_URL` 用于生成 Web 管理后台的访问链接，部署后可在 Railway 项目设置中查看你的应用地址。
 
 ## 使用说明
 
@@ -98,6 +106,61 @@ railway up
 #### 频道管理
 - `/setchannel @频道1 @频道2` - 设置强制关注的频道列表
 - `/setchannel` - 清空强制关注频道列表
+
+#### Web 管理后台
+- `/admin` - 获取 Web 管理后台访问链接（仅管理员可用）
+  - 生成一次性访问令牌（5分钟有效）
+  - 通过 Web 界面管理群组、频道和管理员
+  - 无需密码，通过 Telegram 身份验证
+
+### Web 管理后台
+
+Web 管理后台提供了友好的图形界面来管理机器人，支持移动端访问。
+
+#### 访问方式
+
+1. 私聊机器人发送 `/admin` 命令
+2. 点击返回的按钮进入管理后台
+3. 链接包含一次性令牌，5分钟内有效
+4. 登录后保持会话，无需重复验证
+
+**重要提示**：
+- 只有在 `ADMINS` 列表中的用户才能访问管理后台
+- 非管理员发送 `/admin` 命令时，机器人不会有任何回复（静默忽略）
+- 必须配置 `BASE_URL` 环境变量才能使用此功能
+- 需要 Redis 数据库支持（用于存储临时令牌）
+
+#### 功能页面
+
+**📊 仪表盘**
+- 查看系统概览（群组数、频道数、管理员数）
+- 快速访问各管理页面
+
+**👥 群组管理**
+- 添加/删除同步群组
+- 查看所有已添加的群组列表
+- 提示：批量添加建议使用 `/addall` 命令
+
+**📢 频道管理**
+- 添加/删除强制关注频道
+- 查看所有强制频道列表
+- 一键清空所有频道
+
+**👤 管理员管理**
+- 添加/删除管理员（通过用户 ID）
+- 查看所有管理员列表
+- OWNER 用户不可删除
+- 提示：添加用户名需使用 `/addadmin @username` 命令
+
+**🚪 退出登录**
+- 清除会话，退出管理后台
+
+#### 界面特性
+- 🌙 深色主题设计
+- 📱 响应式布局，支持手机访问
+- 🎨 卡片式界面，操作直观
+- ⚠️ 危险操作有确认提示
+- ✅ 操作结果实时反馈
 
 ### 获取群组 ID
 
