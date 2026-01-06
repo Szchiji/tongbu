@@ -33,6 +33,9 @@ WELCOME_TEXT = "欢迎！请先关注以下频道才能发言，关注完成后�
 OWNER_ID = int(os.getenv("OWNER_ID"))
 ADMINS = [OWNER_ID]  # 支持多个，动态添加
 
+# Bot ID cache
+BOT_ID = None
+
 # —— Data Persistence Functions ——
 def load_data():
     """Load persistent data from JSON file"""
@@ -202,10 +205,15 @@ async def check_and_unban(c, cq):
 # Use dynamic filter to check if message is from a sync group
 @app_tg.on_message(filters.group)
 async def sync_message(c, m):
+    global BOT_ID
+    # Cache bot ID on first call
+    if BOT_ID is None:
+        BOT_ID = (await c.get_me()).id
+    
     # Check if message is from a sync group
     if m.chat.id not in SYNC_GROUPS:
         return
-    if m.from_user and m.from_user.id == (await c.get_me()).id:
+    if m.from_user and m.from_user.id == BOT_ID:
         return
     if m.from_user and not await is_subscribed(m.from_user.id):
         await m.delete()
