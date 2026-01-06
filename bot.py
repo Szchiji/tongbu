@@ -519,9 +519,8 @@ async def sync_delete(c, messages):
 # 新增：Flask HTTP 服务器，让 Render Web Service 检测到端口
 flask_app = Flask(__name__, template_folder='web/templates')
 
-# Configure Flask session
+# Configure Flask session (using default cookie-based sessions)
 flask_app.secret_key = os.getenv("SECRET_KEY", os.urandom(24).hex())
-flask_app.config['SESSION_TYPE'] = 'filesystem'
 
 # Import and initialize web routes
 from web.routes import init_routes
