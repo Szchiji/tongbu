@@ -327,13 +327,26 @@ async def sync_edit(c, m):
                 target_msg_id = mapping.get(str(gid))
                 if target_msg_id:
                     try:
-                        # Try to edit the message
-                        await c.edit_message_text(
-                            chat_id=gid,
-                            message_id=int(target_msg_id),
-                            text=m.text or m.caption or ""
-                        )
-                        logger.info(f"Edited message {target_msg_id} in {gid}")
+                        # Determine if it's a media message with caption or text message
+                        if m.caption:
+                            # It's a media message with caption
+                            await c.edit_message_caption(
+                                chat_id=gid,
+                                message_id=int(target_msg_id),
+                                caption=m.caption
+                            )
+                            logger.info(f"Edited caption of message {target_msg_id} in {gid}")
+                        elif m.text:
+                            # It's a text message
+                            await c.edit_message_text(
+                                chat_id=gid,
+                                message_id=int(target_msg_id),
+                                text=m.text
+                            )
+                            logger.info(f"Edited text of message {target_msg_id} in {gid}")
+                        else:
+                            # Can't edit this type of message, copy as new
+                            raise Exception("Message type cannot be edited")
                     except Exception as e:
                         # If edit fails (e.g., message type changed), copy as new
                         logger.warning(f"Edit failed for {gid}, copying as new: {e}")
