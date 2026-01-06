@@ -31,13 +31,17 @@
 2. 登录 Railway 控制台
 3. 点击 "New Project" → "Deploy from GitHub repo"
 4. 选择你的仓库
-5. 添加以下环境变量：
+5. 添加 Redis 数据库：
+   - 在项目中点击 "+ New" → "Database" → "Add Redis"
+   - Railway 会自动将 `REDIS_URL` 注入到环境变量中
+6. 添加以下环境变量：
    - `API_ID`：你的 Telegram API ID
    - `API_HASH`：你的 Telegram API Hash
    - `BOT_TOKEN`：你的机器人 Token
    - `OWNER_ID`：你的 Telegram 用户 ID
    - `PORT`：Railway 会自动注入，无需手动设置
-6. 点击 "Deploy"
+   - `REDIS_URL`：Railway 添加 Redis 后会自动注入，无需手动设置
+7. 点击 "Deploy"
 
 #### 方法 2：使用 Railway CLI 部署
 
@@ -69,7 +73,10 @@ railway up
 | `API_HASH` | ✅ | Telegram API Hash | `0123456789abcdef0123456789abcdef` |
 | `BOT_TOKEN` | ✅ | 机器人 Token | `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11` |
 | `OWNER_ID` | ✅ | 主人用户 ID | `123456789` |
+| `REDIS_URL` | ⚠️ | Redis 数据库连接 URL（Railway 自动注入） | `redis://default:password@host:port` |
 | `PORT` | ⚠️ | HTTP 服务端口（Railway 自动注入） | `10000` |
+
+**注意**：`REDIS_URL` 环境变量在 Railway 部署时会自动注入。如果不存在此变量，机器人会回退到使用本地 JSON 文件存储数据（适用于本地测试）。
 
 ## 使用说明
 
@@ -109,10 +116,22 @@ railway up
 
 ## 数据持久化
 
-机器人会自动将以下数据保存到 `bot_data.json` 文件：
+机器人支持两种数据持久化方式：
+
+### Redis 数据库（推荐用于生产环境）
+当 `REDIS_URL` 环境变量存在时（如在 Railway 部署），机器人会使用 Redis 数据库存储以下数据：
 - 同步群组列表 (`SYNC_GROUPS`)
 - 强制关注频道列表 (`REQUIRED_CHANNELS`)
 - 管理员列表 (`ADMINS`)
+
+在 Railway 部署时：
+1. 点击项目中的 "+ New" → "Database" → "Add Redis"
+2. Railway 会自动将 Redis 服务的 `REDIS_URL` 注入到应用环境变量中
+3. 无需手动配置，机器人会自动使用 Redis 存储数据
+4. 数据会在重启和重新部署后保持不丢失
+
+### JSON 文件（用于本地测试）
+当 `REDIS_URL` 环境变量不存在时，机器人会回退到使用本地 `bot_data.json` 文件存储数据。这适用于本地开发和测试环境。
 
 重启后数据会自动加载，无需重新配置。
 
