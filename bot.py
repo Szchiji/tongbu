@@ -83,19 +83,31 @@ def load_data():
     if r:
         # Load from Redis
         try:
-            data = r.get("sync_groups")
-            if data:
-                SYNC_GROUPS = set(json.loads(data))
-            data = r.get("admins")
-            if data:
-                loaded_admins = json.loads(data)
+            # Load sync groups
+            sync_groups_data = r.get("sync_groups")
+            if sync_groups_data:
+                SYNC_GROUPS = set(json.loads(sync_groups_data))
+            else:
+                SYNC_GROUPS = set()
+            
+            # Load admins
+            admins_data = r.get("admins")
+            if admins_data:
+                loaded_admins = json.loads(admins_data)
                 # Ensure OWNER_ID is always in ADMINS
                 if OWNER_ID not in loaded_admins:
                     loaded_admins.append(OWNER_ID)
                 ADMINS = loaded_admins
-            data = r.get("channels")
-            if data:
-                REQUIRED_CHANNELS = json.loads(data)
+            else:
+                ADMINS = [OWNER_ID]
+            
+            # Load channels
+            channels_data = r.get("channels")
+            if channels_data:
+                REQUIRED_CHANNELS = json.loads(channels_data)
+            else:
+                REQUIRED_CHANNELS = []
+            
             logger.info(f"Loaded data from Redis: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins")
         except Exception as e:
             logger.error(f"Error loading data from Redis: {e}")
@@ -108,10 +120,10 @@ def load_data():
         try:
             if os.path.exists(DATA_FILE):
                 with open(DATA_FILE, 'r') as f:
-                    data = json.load(f)
-                    SYNC_GROUPS = set(data.get('sync_groups', []))
-                    REQUIRED_CHANNELS = data.get('required_channels', [])
-                    ADMINS = data.get('admins', [OWNER_ID])
+                    json_data = json.load(f)
+                    SYNC_GROUPS = set(json_data.get('sync_groups', []))
+                    REQUIRED_CHANNELS = json_data.get('required_channels', [])
+                    ADMINS = json_data.get('admins', [OWNER_ID])
                     # Ensure OWNER_ID is always in ADMINS
                     if OWNER_ID not in ADMINS:
                         ADMINS.append(OWNER_ID)
