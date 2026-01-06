@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Data persistence file path
 DATA_FILE = "bot_data.json"
+MESSAGE_MAP_FILE = "message_mapping.json"
 
 # Redis connection
 REDIS_URL = os.getenv("REDIS_URL")
@@ -48,6 +49,10 @@ ADMINS = [OWNER_ID]  # 支持多个，动态添加
 
 # Bot ID cache
 BOT_ID = None
+
+# Message ID mapping: {original_chat_id:original_msg_id: {target_chat_id: target_msg_id, ...}}
+MESSAGE_MAPPING = {}
+MESSAGE_MAPPING_COUNTER = 0  # Counter for periodic saves
 
 # —— Data Persistence Functions ——
 def save_to_redis(key, value):
@@ -150,6 +155,56 @@ def save_data():
         logger.info("Data saved successfully")
     except Exception as e:
         logger.error(f"Error saving data: {e}")
+
+# —— Message Mapping Functions ——
+def load_message_mapping():
+    """Load message mapping from JSON file"""
+    global MESSAGE_MAPPING
+    try:
+        if os.path.exists(MESSAGE_MAP_FILE):
+            with open(MESSAGE_MAP_FILE, 'r') as f:
+                MESSAGE_MAPPING = json.load(f)
+                logger.info(f"Loaded {len(MESSAGE_MAPPING)} message mappings")
+        else:
+            logger.info("No message mapping file found, starting fresh")
+    except Exception as e:
+        logger.error(f"Error loading message mapping: {e}")
+        MESSAGE_MAPPING = {}
+
+def save_message_mapping():
+    """Save message mapping to JSON file"""
+    try:
+        with open(MESSAGE_MAP_FILE, 'w') as f:
+            json.dump(MESSAGE_MAPPING, f)
+        logger.debug("Message mapping saved")
+    except Exception as e:
+        logger.error(f"Error saving message mapping: {e}")
+
+def add_message_mapping(original_chat_id, original_msg_id, target_chat_id, target_msg_id):
+    """Add a message ID mapping"""
+    global MESSAGE_MAPPING_COUNTER
+    key = f"{original_chat_id}:{original_msg_id}"
+    if key not in MESSAGE_MAPPING:
+        MESSAGE_MAPPING[key] = {}
+    # Store as integer for consistency
+    MESSAGE_MAPPING[key][str(target_chat_id)] = int(target_msg_id)
+    # Save periodically (every 5 new mappings) to reduce risk of data loss
+    MESSAGE_MAPPING_COUNTER += 1
+    if MESSAGE_MAPPING_COUNTER >= 5:
+        save_message_mapping()
+        MESSAGE_MAPPING_COUNTER = 0
+
+def get_message_mapping(original_chat_id, original_msg_id):
+    """Get message ID mappings for an original message"""
+    key = f"{original_chat_id}:{original_msg_id}"
+    return MESSAGE_MAPPING.get(key, {})
+
+def delete_message_mapping(original_chat_id, original_msg_id):
+    """Delete a message ID mapping"""
+    key = f"{original_chat_id}:{original_msg_id}"
+    if key in MESSAGE_MAPPING:
+        del MESSAGE_MAPPING[key]
+        save_message_mapping()
 
 # —— 新命令：添加/删除管理员 ——
 @app_tg.on_message(filters.private & filters.command("addadmin") & filters.user(ADMINS))
@@ -290,43 +345,141 @@ async def sync_message(c, m):
     # Check if message is from a sync group
     if m.chat.id not in SYNC_GROUPS:
         return
+    
+    # Skip service messages (join, leave, etc.)
+    if m.service:
+        return
+    
+    # Skip empty messages
+    if m.empty:
+        return
+    
+    # Skip messages from the bot itself (sent by bot user)
     if m.from_user and m.from_user.id == BOT_ID:
         return
-    if m.from_user and not await is_subscribed(m.from_user.id):
-        await m.delete()
+    
+    # Skip messages sent by bot as channel/sender_chat
+    if m.sender_chat and m.sender_chat.id == BOT_ID:
         return
+    
+    # Check subscription only for regular users (not bots, not anonymous, not channels)
+    if m.from_user and not m.from_user.is_bot:
+        if not await is_subscribed(m.from_user.id):
+            try:
+                await m.delete()
+            except Exception as e:
+                logger.error(f"Failed to delete unsubscribed user message: {e}")
+            return
+    
+    # Sync to all other groups
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
             try:
-                await m.copy(gid)
+                sent = await m.copy(gid)
+                # Store message mapping for edit/delete sync
+                add_message_mapping(m.chat.id, m.id, gid, sent.id)
             except Exception as e:
                 logger.error(f"Copy failed to {gid}: {e}")
 
 @app_tg.on_edited_message(filters.group)
 async def sync_edit(c, m):
+    global BOT_ID
+    if BOT_ID is None:
+        BOT_ID = (await c.get_me()).id
+    
     # Check if message is from a sync group
     if m.chat.id not in SYNC_GROUPS:
         return
+    
+    # Skip messages from the bot itself
+    if m.from_user and m.from_user.id == BOT_ID:
+        return
+    
+    # Skip messages sent by bot as channel/sender_chat
+    if m.sender_chat and m.sender_chat.id == BOT_ID:
+        return
+    
+    # Try to use message mapping to edit the synced messages
+    mapping = get_message_mapping(m.chat.id, m.id)
+    
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
             try:
-                await m.copy(gid)
+                # If we have a mapping, try to edit the existing message
+                target_msg_id = mapping.get(str(gid))
+                if target_msg_id:
+                    try:
+                        # Determine message type and use appropriate edit method
+                        if m.media:
+                            # It's a media message - edit caption (can be empty or None)
+                            await c.edit_message_caption(
+                                chat_id=gid,
+                                message_id=target_msg_id,
+                                caption=m.caption or ""
+                            )
+                            logger.info(f"Edited caption of message {target_msg_id} in {gid}")
+                        elif m.text:
+                            # It's a text message
+                            await c.edit_message_text(
+                                chat_id=gid,
+                                message_id=target_msg_id,
+                                text=m.text
+                            )
+                            logger.info(f"Edited text of message {target_msg_id} in {gid}")
+                        else:
+                            # Message type cannot be edited (e.g., stickers, files without text/caption changes)
+                            raise Exception("Message type does not support editing, will copy as new")
+                    except Exception as e:
+                        # If edit fails (e.g., message type changed), copy as new
+                        logger.warning(f"Edit failed for {gid}, copying as new: {e}")
+                        sent = await m.copy(gid)
+                        add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                else:
+                    # No mapping found, copy as new message
+                    sent = await m.copy(gid)
+                    add_message_mapping(m.chat.id, m.id, gid, sent.id)
             except Exception as e:
                 logger.error(f"Edit sync failed to {gid}: {e}")
 
 @app_tg.on_deleted_messages(filters.group)
-async def sync_delete(client, messages):
+async def sync_delete(c, messages):
     # Check if messages are from a sync group
-    if not messages or messages[0].chat.id not in SYNC_GROUPS:
+    if not messages:
         return
-    chat_id = messages[0].chat.id
-    msg_ids = [msg.id for msg in messages]
-    for gid in list(SYNC_GROUPS):
-        if gid != chat_id:
-            try:
-                await client.delete_messages(gid, msg_ids)
-            except Exception as e:
-                logger.error(f"Delete sync failed to {gid}: {e}")
+    
+    # Group messages by their original chat and collect mappings
+    delete_targets = {}  # {target_chat_id: [msg_ids]}
+    
+    # Process each deleted message
+    for m in messages:
+        if m.chat.id not in SYNC_GROUPS:
+            continue
+        
+        # Get the message mapping
+        mapping = get_message_mapping(m.chat.id, m.id)
+        
+        if mapping:
+            # Collect target messages to delete
+            for gid_str, target_msg_id in mapping.items():
+                gid = int(gid_str)
+                if gid != m.chat.id:
+                    if gid not in delete_targets:
+                        delete_targets[gid] = []
+                    delete_targets[gid].append(target_msg_id)
+            
+            # Clean up the mapping
+            delete_message_mapping(m.chat.id, m.id)
+        else:
+            # No mapping found, just log it
+            logger.info(f"Message {m.id} deleted in {m.chat.id}, but no mapping found")
+    
+    # Batch delete messages by group
+    for gid, msg_ids in delete_targets.items():
+        try:
+            await c.delete_messages(gid, msg_ids)
+            logger.info(f"Deleted {len(msg_ids)} synced message(s) in {gid}")
+        except Exception as e:
+            logger.error(f"Delete sync failed to {gid}: {e}")
 
 # 新增：Flask HTTP 服务器，让 Render Web Service 检测到端口
 flask_app = Flask(__name__)
@@ -342,6 +495,9 @@ def run_flask():
 if __name__ == "__main__":
     # Load persistent data
     load_data()
+    
+    # Load message mappings
+    load_message_mapping()
     
     # 启动 Flask 在后台线程
     threading.Thread(target=run_flask, daemon=True).start()
