@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘 - 管理后台{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>📊 系统概览</h2>
+    
+    <div class="stats">
+        <div class="stat-card">
+            <h3>同步群组</h3>
+            <div class="value">{{ stats.groups }}</div>
+        </div>
+        <div class="stat-card">
+            <h3>强制频道</h3>
+            <div class="value">{{ stats.channels }}</div>
+        </div>
+        <div class="stat-card">
+            <h3>管理员数</h3>
+            <div class="value">{{ stats.admins }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>ℹ️ 系统信息</h2>
+    <div style="line-height: 1.8;">
+        <p><strong>管理员 ID：</strong>{{ admin_id }}</p>
+        <p><strong>机器人状态：</strong><span style="color: #27ae60;">✓ 运行中</span></p>
+    </div>
+</div>
+
+<div class="card">
+    <h2>🎯 快速操作</h2>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <a href="/admin/groups"><button class="btn">管理群组</button></a>
+        <a href="/admin/channels"><button class="btn">管理频道</button></a>
+        <a href="/admin/admins"><button class="btn">管理管理员</button></a>
+    </div>
+</div>
+{% endblock %}

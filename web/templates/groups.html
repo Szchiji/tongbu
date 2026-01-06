@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}群组管理 - 管理后台{% endblock %}
+
+{% block content %}
+{% if message %}
+<div class="alert alert-{{ message_type }}">
+    {{ message }}
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>➕ 添加群组</h2>
+    <form method="POST" action="/admin/groups/add">
+        <div class="form-group">
+            <label>群组 ID（格式：-100xxxxxxxxxx）</label>
+            <input type="text" name="group_id" placeholder="-100123456789" required>
+        </div>
+        <button type="submit" class="btn">添加群组</button>
+    </form>
+    
+    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #444;">
+        <form method="POST" action="/admin/groups/addall" onsubmit="return confirmAction('这将添加机器人所在的所有群组，建议使用机器人命令 /addall 执行。是否继续？');">
+            <button type="submit" class="btn btn-secondary">批量添加所有群组（不推荐）</button>
+        </form>
+        <p style="margin-top: 10px; color: #b0b0b0; font-size: 12px;">
+            💡 提示：建议直接私聊机器人发送 <code>/addall</code> 命令
+        </p>
+    </div>
+</div>
+
+<div class="card">
+    <h2>📋 已添加的群组（{{ groups|length }} 个）</h2>
+    
+    {% if groups %}
+        {% for group in groups %}
+        <div class="list-item">
+            <div class="list-item-content">
+                <strong>{{ group }}</strong>
+            </div>
+            <div class="list-item-actions">
+                <form method="POST" action="/admin/groups/delete" style="display: inline;" onsubmit="return confirmAction('确定要删除群组 {{ group }} 吗？');">
+                    <input type="hidden" name="group_id" value="{{ group }}">
+                    <button type="submit" class="btn btn-danger">删除</button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <p style="color: #b0b0b0;">暂无群组，请添加。</p>
+    {% endif %}
+</div>
+{% endblock %}

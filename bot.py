@@ -288,6 +288,41 @@ async def set_channels(c, m):
 async def status(c, m):
     await m.reply(f"同步群数量：{len(SYNC_GROUPS)}\n强制频道：{REQUIRED_CHANNELS or '无'}\n管理员：{ADMINS}")
 
+# —— Web 管理后台入口 ——
+@app_tg.on_message(filters.private & filters.command("admin"))
+async def admin_panel(c, m):
+    user_id = m.from_user.id
+    # 只有管理员才回复
+    if user_id not in ADMINS:
+        return  # 不是管理员，静默忽略，不回复任何内容
+    
+    # 生成一次性 Token
+    import secrets
+    token = f"{user_id}:{secrets.token_urlsafe(32)}"
+    
+    # 存入 Redis，5分钟过期
+    if r:
+        try:
+            r.setex(f"admin_token:{token}", 300, str(user_id))
+        except Exception as e:
+            logger.error(f"Failed to store admin token in Redis: {e}")
+            return await m.reply("❌ 无法生成访问令牌，请检查 Redis 连接！")
+    else:
+        return await m.reply("❌ Redis 未配置，无法使用 Web 管理后台！")
+    
+    # 获取后台 URL
+    base_url = os.getenv("BASE_URL", "").rstrip("/")
+    if not base_url:
+        return await m.reply("❌ 请先设置 BASE_URL 环境变量！")
+    
+    admin_url = f"{base_url}/admin?token={token}"
+    
+    # 发送带按钮的消息
+    button = types.InlineKeyboardMarkup([
+        [types.InlineKeyboardButton("🖥️ 进入管理后台", url=admin_url)]
+    ])
+    await m.reply("点击下方按钮进入管理后台：\n\n⚠️ 链接5分钟内有效", reply_markup=button)
+
 # —— 检查是否关注所有频道 ——
 async def is_subscribed(user_id):
     if not REQUIRED_CHANNELS:
@@ -482,7 +517,15 @@ async def sync_delete(c, messages):
             logger.error(f"Delete sync failed to {gid}: {e}")
 
 # 新增：Flask HTTP 服务器，让 Render Web Service 检测到端口
-flask_app = Flask(__name__)
+flask_app = Flask(__name__, template_folder='web/templates')
+
+# Configure Flask session
+flask_app.secret_key = os.getenv("SECRET_KEY", os.urandom(24).hex())
+flask_app.config['SESSION_TYPE'] = 'filesystem'
+
+# Import and initialize web routes
+from web.routes import init_routes
+init_routes(flask_app)
 
 @flask_app.route('/')
 def health_check():
