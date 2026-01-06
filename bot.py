@@ -3,8 +3,20 @@ from pyrogram import Client, filters, types
 from pyrogram.types import ChatPrivileges
 import asyncio
 import os
+import json
+import logging
 import threading  # 用于后台运行 Flask
 from flask import Flask  # 新增：Flask 库
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Data persistence file path
+DATA_FILE = "bot_data.json"
 
 app_tg = Client(  # 改名，避免和 Flask 冲突
     "tg_sync_bot",
@@ -21,6 +33,44 @@ WELCOME_TEXT = "欢迎！请先关注以下频道才能发言，关注完成后�
 OWNER_ID = int(os.getenv("OWNER_ID"))
 ADMINS = [OWNER_ID]  # 支持多个，动态添加
 
+# —— Data Persistence Functions ——
+def load_data():
+    """Load persistent data from JSON file"""
+    global SYNC_GROUPS, REQUIRED_CHANNELS, ADMINS
+    try:
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, 'r') as f:
+                data = json.load(f)
+                SYNC_GROUPS = set(data.get('sync_groups', []))
+                REQUIRED_CHANNELS = data.get('required_channels', [])
+                ADMINS = data.get('admins', [OWNER_ID])
+                # Ensure OWNER_ID is always in ADMINS
+                if OWNER_ID not in ADMINS:
+                    ADMINS.append(OWNER_ID)
+                logger.info(f"Loaded data: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins")
+        else:
+            logger.info("No data file found, starting with defaults")
+    except Exception as e:
+        logger.error(f"Error loading data: {e}")
+        # Use defaults
+        SYNC_GROUPS = set()
+        REQUIRED_CHANNELS = []
+        ADMINS = [OWNER_ID]
+
+def save_data():
+    """Save persistent data to JSON file"""
+    try:
+        data = {
+            'sync_groups': list(SYNC_GROUPS),
+            'required_channels': REQUIRED_CHANNELS,
+            'admins': ADMINS
+        }
+        with open(DATA_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+        logger.info("Data saved successfully")
+    except Exception as e:
+        logger.error(f"Error saving data: {e}")
+
 # —— 新命令：添加/删除管理员 ——
 @app_tg.on_message(filters.private & filters.command("addadmin") & filters.user(ADMINS))
 async def add_admin(c, m):
@@ -31,7 +81,8 @@ async def add_admin(c, m):
         try:
             user = await c.get_users(target)
             user_id = user.id
-        except:
+        except Exception as e:
+            logger.error(f"Failed to get user {target}: {e}")
             return await m.reply("找不到这个用户！")
     else:
         user_id = int(target)
@@ -39,6 +90,7 @@ async def add_admin(c, m):
     if user_id in ADMINS:
         return await m.reply("已经是管理员了！")
     ADMINS.append(user_id)
+    save_data()
     await m.reply(f"已添加 {user_id} 为管理员！")
 
 @app_tg.on_message(filters.private & filters.command("deladmin") & filters.user(ADMINS))
@@ -50,6 +102,7 @@ async def del_admin(c, m):
         return await m.reply("不能删除主人！")
     if user_id in ADMINS:
         ADMINS.remove(user_id)
+        save_data()
         await m.reply(f"已移除 {user_id} 的管理员权限！")
     else:
         await m.reply("不是管理员！")
@@ -65,6 +118,7 @@ async def add_group(c, m):
         return await m.reply("用法: /addgroup -100群ID")
     group_id = int(m.text.split()[1])
     SYNC_GROUPS.add(group_id)
+    save_data()
     await m.reply(f"已添加群 {group_id} 到同步列表！当前总 {len(SYNC_GROUPS)} 个。")
 
 @app_tg.on_message(filters.private & filters.command("removegroup") & filters.user(ADMINS))
@@ -74,6 +128,7 @@ async def remove_group(c, m):
     group_id = int(m.text.split()[1])
     if group_id in SYNC_GROUPS:
         SYNC_GROUPS.remove(group_id)
+        save_data()
         await m.reply(f"已移除群 {group_id}！当前总 {len(SYNC_GROUPS)} 个。")
     else:
         await m.reply("不在列表中！")
@@ -84,12 +139,14 @@ async def add_all_groups(c, m):
     async for dialog in c.get_dialogs():
         if dialog.chat.type in ["supergroup", "group"]:
             SYNC_GROUPS.add(dialog.chat.id)
+    save_data()
     await m.reply(f"已自动添加 {len(SYNC_GROUPS)} 个群到同步列表！")
 
 @app_tg.on_message(filters.private & filters.command("setchannel") & filters.user(ADMINS))
 async def set_channels(c, m):
     global REQUIRED_CHANNELS
     REQUIRED_CHANNELS = m.text.split()[1:]
+    save_data()
     await m.reply(f"强制关注频道已更新为：{REQUIRED_CHANNELS or '无'}")
 
 @app_tg.on_message(filters.private & filters.command("status") & filters.user(ADMINS))
@@ -103,7 +160,8 @@ async def is_subscribed(user_id):
     for ch in REQUIRED_CHANNELS:
         try:
             await app_tg.get_chat_member(ch, user_id)
-        except:
+        except Exception as e:
+            logger.debug(f"User {user_id} not subscribed to {ch}: {e}")
             return False
     return True
 
@@ -133,18 +191,23 @@ async def check_and_unban(c, cq):
         for gid in list(SYNC_GROUPS):
             try:
                 await app_tg.restrict_chat_member(gid, cq.from_user.id, ChatPrivileges(can_send_messages=True))
-            except: pass
+            except Exception as e:
+                logger.error(f"Failed to unban user {cq.from_user.id} in group {gid}: {e}")
         await cq.answer("解禁成功！欢迎发言～", show_alert=True)
         await app_tg.send_message(cq.from_user.id, "已解禁所有同步群！")
     else:
         await cq.answer("检测到你还没关注完哦～", show_alert=True)
 
 # —— 核心同步（发消息、删、编辑全同步）——
-@app_tg.on_message(filters.chat(list(SYNC_GROUPS)))
+# Use dynamic filter to check if message is from a sync group
+@app_tg.on_message(filters.group)
 async def sync_message(c, m):
-    if m.from_user.id == (await c.get_me()).id:
+    # Check if message is from a sync group
+    if m.chat.id not in SYNC_GROUPS:
         return
-    if not await is_subscribed(m.from_user.id):
+    if m.from_user and m.from_user.id == (await c.get_me()).id:
+        return
+    if m.from_user and not await is_subscribed(m.from_user.id):
         await m.delete()
         return
     for gid in list(SYNC_GROUPS):
@@ -152,25 +215,33 @@ async def sync_message(c, m):
             try:
                 await m.copy(gid)
             except Exception as e:
-                print(f"Copy failed: {e}")
+                logger.error(f"Copy failed to {gid}: {e}")
 
-@app_tg.on_edited_message(filters.chat(list(SYNC_GROUPS)))
+@app_tg.on_edited_message(filters.group)
 async def sync_edit(c, m):
+    # Check if message is from a sync group
+    if m.chat.id not in SYNC_GROUPS:
+        return
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
             try:
                 await m.copy(gid)
             except Exception as e:
-                print(f"Edit failed: {e}")
+                logger.error(f"Edit sync failed to {gid}: {e}")
 
-@app_tg.on_deleted_messages(filters.chat(list(SYNC_GROUPS)))
-async def sync_delete(c, chat, msg_ids):
+@app_tg.on_deleted_messages(filters.group)
+async def sync_delete(client, messages):
+    # Check if messages are from a sync group
+    if not messages or messages[0].chat.id not in SYNC_GROUPS:
+        return
+    chat_id = messages[0].chat.id
+    msg_ids = [msg.id for msg in messages]
     for gid in list(SYNC_GROUPS):
-        if gid != chat.id:
+        if gid != chat_id:
             try:
-                await c.delete_messages(gid, msg_ids)
+                await client.delete_messages(gid, msg_ids)
             except Exception as e:
-                print(f"Delete failed: {e}")
+                logger.error(f"Delete sync failed to {gid}: {e}")
 
 # 新增：Flask HTTP 服务器，让 Render Web Service 检测到端口
 flask_app = Flask(__name__)
@@ -183,8 +254,12 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))  # Render 默认端口 10000
     flask_app.run(host='0.0.0.0', port=port)
 
-# 启动 Flask 在后台线程
-threading.Thread(target=run_flask, daemon=True).start()
-
-print("无限群同步 + 强制关注 + 多管理员机器人已启动！（Web Service 模式）")
-app_tg.run()
+if __name__ == "__main__":
+    # Load persistent data
+    load_data()
+    
+    # 启动 Flask 在后台线程
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    logger.info("无限群同步 + 强制关注 + 多管理员机器人已启动！（Web Service 模式）")
+    app_tg.run()
