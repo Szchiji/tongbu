@@ -100,16 +100,11 @@ def setup_routes(app):
     
     @app.route('/admin/groups/addall', methods=['POST'])
     @admin_required
-    async def add_all_groups():
-        """Add all groups"""
-        if app_tg:
-            try:
-                async for dialog in app_tg.get_dialogs():
-                    if dialog.chat.type in ["supergroup", "group"]:
-                        SYNC_GROUPS.add(dialog.chat.id)
-                save_data()
-            except Exception as e:
-                print(f"Error adding all groups: {e}")
+    def add_all_groups():
+        """Add all groups - Note: This is a placeholder, actual functionality via bot command"""
+        # Since we can't easily make async calls in Flask, users should use /addall command in bot
+        # This just redirects back with no action
+        # In a production setup, you could use task queues or other async mechanisms
         return redirect(url_for('admin_groups'))
     
     @app.route('/admin/channels')
