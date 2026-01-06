@@ -520,7 +520,14 @@ async def sync_delete(c, messages):
 flask_app = Flask(__name__, template_folder='web/templates')
 
 # Configure Flask session (using default cookie-based sessions)
-flask_app.secret_key = os.getenv("SECRET_KEY", os.urandom(24).hex())
+# Generate a consistent secret key based on BOT_TOKEN if SECRET_KEY not provided
+secret_key = os.getenv("SECRET_KEY")
+if not secret_key:
+    # Use BOT_TOKEN as seed for consistent secret key across restarts
+    import hashlib
+    bot_token = os.getenv("BOT_TOKEN", "")
+    secret_key = hashlib.sha256(bot_token.encode()).hexdigest()
+flask_app.secret_key = secret_key
 
 # Import and initialize web routes
 from web.routes import init_routes
