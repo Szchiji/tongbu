@@ -537,12 +537,12 @@ async def sync_edit(c, m):
     if m.chat.id not in SYNC_GROUPS:
         return
     
-    # Skip messages from this bot/user itself to prevent infinite loops
-    if m.from_user and m.from_user.id == BOT_ID:
-        return
-    
     # Skip forwarded messages to prevent duplicate sync
     if m.forward_date:
+        return
+    
+    # Skip messages from this bot/user itself to prevent infinite loops
+    if m.from_user and m.from_user.id == BOT_ID:
         return
     
     # Skip messages sent by this bot/user as channel/sender_chat
