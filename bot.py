@@ -7,6 +7,7 @@ import json
 import logging
 import threading  # 用于后台运行 Flask
 import atexit  # 用于退出时保存数据
+import time  # 用于消息去重时间戳
 from flask import Flask  # 新增：Flask 库
 import redis  # Redis 数据库
 
@@ -54,6 +55,12 @@ BOT_ID = None
 # Message ID mapping: {original_chat_id:original_msg_id: {target_chat_id: target_msg_id, ...}}
 MESSAGE_MAPPING = {}
 MESSAGE_MAPPING_COUNTER = 0  # Counter for periodic saves
+
+# Track synced message IDs to prevent re-syncing
+# Format: {"chat_id:msg_id": timestamp}
+# Used to detect messages that were sent by this bot as part of sync
+SYNCED_MESSAGES = {}
+SYNCED_MESSAGES_COUNTER = 0  # Counter for periodic cleanup
 
 # —— Data Persistence Functions ——
 def save_to_redis(key, value):
@@ -228,6 +235,58 @@ def cleanup_old_mappings(max_entries=10000):
             del MESSAGE_MAPPING[key]
         save_message_mapping()
         logger.info(f"Cleaned up {len(keys_to_remove)} old message mappings")
+
+# —— Synced Message Tracking Functions ——
+def mark_message_as_synced(chat_id, msg_id):
+    """Mark a message as synced by this bot
+    
+    This is used to prevent re-syncing messages that we sent as part of sync.
+    Also triggers periodic cleanup to prevent memory growth.
+    """
+    global SYNCED_MESSAGES_COUNTER
+    key = f"{chat_id}:{msg_id}"
+    SYNCED_MESSAGES[key] = time.time()
+    
+    # Periodic cleanup (every 100 new entries)
+    SYNCED_MESSAGES_COUNTER += 1
+    if SYNCED_MESSAGES_COUNTER >= 100:
+        cleanup_synced_messages()
+        SYNCED_MESSAGES_COUNTER = 0
+
+def is_synced_message(chat_id, msg_id):
+    """Check if a message was synced by this bot
+    
+    Returns True if the message was sent by this bot as part of sync operation.
+    """
+    key = f"{chat_id}:{msg_id}"
+    return key in SYNCED_MESSAGES
+
+def cleanup_synced_messages(max_age_seconds=3600, max_entries=10000):
+    """Clean up old synced message tracking entries
+    
+    Removes entries older than max_age_seconds to prevent memory growth.
+    Also limits total entries to max_entries.
+    """
+    current_time = time.time()
+    keys_to_remove = [
+        key for key, timestamp in SYNCED_MESSAGES.items()
+        if current_time - timestamp > max_age_seconds
+    ]
+    for key in keys_to_remove:
+        del SYNCED_MESSAGES[key]
+    
+    # Also limit total entries if still too many
+    if len(SYNCED_MESSAGES) > max_entries:
+        # Remove oldest entries
+        sorted_items = sorted(SYNCED_MESSAGES.items(), key=lambda x: x[1])
+        num_to_remove = len(SYNCED_MESSAGES) - max_entries
+        for key, _ in sorted_items[:num_to_remove]:
+            del SYNCED_MESSAGES[key]
+        keys_to_remove.extend([key for key, _ in sorted_items[:num_to_remove]])
+    
+    if keys_to_remove:
+        logger.debug(f"Cleaned up {len(keys_to_remove)} old synced message entries")
+
 
 # —— /start 和 /help 命令 ——
 @app_tg.on_message(filters.private & filters.command("start"))
@@ -490,6 +549,11 @@ async def sync_message(c, m):
     if m.sender_chat and m.sender_chat.id == BOT_ID:
         return
     
+    # Skip messages that were synced by this bot (deduplication check)
+    # This handles edge cases where the bot sends as anonymous admin
+    if is_synced_message(m.chat.id, m.id):
+        return
+    
     # Determine if message is from a bot (for logging purposes)
     is_from_bot = m.from_user and m.from_user.is_bot
     is_from_channel = m.sender_chat is not None
@@ -520,6 +584,8 @@ async def sync_message(c, m):
                 sent = await m.copy(gid)
                 # Store message mapping for edit/delete sync
                 add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                # Mark the synced message to prevent re-syncing
+                mark_message_as_synced(gid, sent.id)
             except Exception as e:
                 logger.error(f"Copy failed to {gid}: {e}")
 
@@ -543,6 +609,10 @@ async def sync_edit(c, m):
     
     # Skip messages sent by this bot/user as channel/sender_chat
     if m.sender_chat and m.sender_chat.id == BOT_ID:
+        return
+    
+    # Skip messages that were synced by this bot (deduplication check)
+    if is_synced_message(m.chat.id, m.id):
         return
     
     # Log bot/channel message edits for debugging
@@ -588,6 +658,7 @@ async def sync_edit(c, m):
                         try:
                             sent = await m.copy(gid)
                             add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                            mark_message_as_synced(gid, sent.id)
                         except Exception as copy_e:
                             logger.error(f"Copy failed to {gid}: {copy_e}")
                 else:
@@ -596,6 +667,7 @@ async def sync_edit(c, m):
                     try:
                         sent = await m.copy(gid)
                         add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                        mark_message_as_synced(gid, sent.id)
                     except Exception as copy_e:
                         logger.error(f"Copy failed to {gid}: {copy_e}")
             except Exception as e:
