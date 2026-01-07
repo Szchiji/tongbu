@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}管理员管理 - 管理后台{% endblock %}
+
+{% block content %}
+{% if message %}
+<div class="alert alert-{{ message_type }}">
+    {{ message }}
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>➕ 添加管理员</h2>
+    <form method="POST" action="/admin/admins/add">
+        <div class="form-group">
+            <label>用户 ID 或用户名</label>
+            <input type="text" name="admin_input" placeholder="123456789 或 @username" required>
+        </div>
+        <button type="submit" class="btn">添加管理员</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>📋 管理员列表（{{ admins|length }} 个）</h2>
+    
+    {% if admins %}
+        {% for admin in admins %}
+        <div class="list-item">
+            <div class="list-item-content">
+                <strong>{{ admin }}</strong>
+                {% if admin == owner_id %}
+                <span style="color: #f39c12; margin-left: 10px;">👑 OWNER</span>
+                {% endif %}
+            </div>
+            <div class="list-item-actions">
+                {% if admin != owner_id %}
+                <form method="POST" action="/admin/admins/delete" style="display: inline;" onsubmit="return confirmAction('确定要删除管理员 {{ admin }} 吗？');">
+                    <input type="hidden" name="admin_id" value="{{ admin }}">
+                    <button type="submit" class="btn btn-danger">删除</button>
+                </form>
+                {% else %}
+                <button class="btn btn-secondary" disabled>不可删除</button>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <p style="color: #b0b0b0;">暂无管理员。</p>
+    {% endif %}
+</div>
+{% endblock %}
