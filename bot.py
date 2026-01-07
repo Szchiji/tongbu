@@ -583,8 +583,11 @@ async def sync_edit(c, m):
                             add_message_mapping(m.chat.id, m.id, gid, sent.id)
                         except Exception as fwd_e:
                             logger.error(f"Forward failed, trying copy: {fwd_e}")
-                            sent = await m.copy(gid)
-                            add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                            try:
+                                sent = await m.copy(gid)
+                                add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                            except Exception as copy_e:
+                                logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
                 else:
                     # No mapping found, forward as new message
                     try:
@@ -592,8 +595,11 @@ async def sync_edit(c, m):
                         add_message_mapping(m.chat.id, m.id, gid, sent.id)
                     except Exception as fwd_e:
                         logger.error(f"Forward failed, trying copy: {fwd_e}")
-                        sent = await m.copy(gid)
-                        add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                        try:
+                            sent = await m.copy(gid)
+                            add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                        except Exception as copy_e:
+                            logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
             except Exception as e:
                 logger.error(f"Edit sync failed to {gid}: {e}")
 
