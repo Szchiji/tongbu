@@ -455,6 +455,8 @@ async def check_and_unban(c, cq):
 
 # —— 核心同步（发消息、删、编辑全同步）——
 # Use dynamic filter to check if message is from a sync group
+# Note: If running as a bot account, Telegram doesn't deliver messages from other bots.
+# To sync messages from other bots, run as a user account (leave BOT_TOKEN empty).
 @app_tg.on_message(filters.group)
 async def sync_message(c, m):
     global BOT_ID
@@ -474,15 +476,20 @@ async def sync_message(c, m):
     if m.empty:
         return
     
-    # Skip messages from the bot itself (sent by bot user)
+    # Skip messages from this bot/user itself to prevent infinite loops
     if m.from_user and m.from_user.id == BOT_ID:
         return
     
-    # Skip messages sent by bot as channel/sender_chat
+    # Skip messages sent by this bot/user as channel/sender_chat
     if m.sender_chat and m.sender_chat.id == BOT_ID:
         return
     
+    # Determine if message is from a bot (for logging purposes)
+    is_from_bot = m.from_user and m.from_user.is_bot
+    is_from_channel = m.sender_chat is not None
+    
     # Check subscription only for regular users (not bots, not anonymous, not channels)
+    # Messages from other bots and channels are synced without subscription check
     if m.from_user and not m.from_user.is_bot:
         if not await is_subscribed(m.from_user.id):
             try:
@@ -490,6 +497,12 @@ async def sync_message(c, m):
             except Exception as e:
                 logger.error(f"Failed to delete unsubscribed user message: {e}")
             return
+    
+    # Log bot/channel messages for debugging
+    if is_from_bot:
+        logger.debug(f"Syncing message from bot {m.from_user.id} in group {m.chat.id}")
+    elif is_from_channel:
+        logger.debug(f"Syncing message from channel/sender_chat {m.sender_chat.id} in group {m.chat.id}")
     
     # Sync to all other groups
     for gid in list(SYNC_GROUPS):
@@ -500,6 +513,13 @@ async def sync_message(c, m):
                 add_message_mapping(m.chat.id, m.id, gid, sent.id)
             except Exception as e:
                 logger.error(f"Forward failed to {gid}: {e}")
+                # Try copy_message as fallback if forward fails
+                try:
+                    sent = await m.copy(gid)
+                    add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                    logger.info(f"Used copy as fallback for message to {gid}")
+                except Exception as copy_e:
+                    logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
 
 @app_tg.on_edited_message(filters.group)
 async def sync_edit(c, m):
@@ -511,13 +531,19 @@ async def sync_edit(c, m):
     if m.chat.id not in SYNC_GROUPS:
         return
     
-    # Skip messages from the bot itself
+    # Skip messages from this bot/user itself to prevent infinite loops
     if m.from_user and m.from_user.id == BOT_ID:
         return
     
-    # Skip messages sent by bot as channel/sender_chat
+    # Skip messages sent by this bot/user as channel/sender_chat
     if m.sender_chat and m.sender_chat.id == BOT_ID:
         return
+    
+    # Log bot/channel message edits for debugging
+    if m.from_user and m.from_user.is_bot:
+        logger.debug(f"Syncing edited message from bot {m.from_user.id} in group {m.chat.id}")
+    elif m.sender_chat:
+        logger.debug(f"Syncing edited message from channel/sender_chat {m.sender_chat.id} in group {m.chat.id}")
     
     # Try to use message mapping to edit the synced messages
     mapping = get_message_mapping(m.chat.id, m.id)
@@ -552,12 +578,28 @@ async def sync_edit(c, m):
                     except Exception as e:
                         # If edit fails (e.g., message type changed), forward as new
                         logger.warning(f"Edit failed for {gid}, forwarding as new: {e}")
-                        sent = await m.forward(gid)
-                        add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                        try:
+                            sent = await m.forward(gid)
+                            add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                        except Exception as fwd_e:
+                            logger.error(f"Forward failed, trying copy: {fwd_e}")
+                            try:
+                                sent = await m.copy(gid)
+                                add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                            except Exception as copy_e:
+                                logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
                 else:
                     # No mapping found, forward as new message
-                    sent = await m.forward(gid)
-                    add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                    try:
+                        sent = await m.forward(gid)
+                        add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                    except Exception as fwd_e:
+                        logger.error(f"Forward failed, trying copy: {fwd_e}")
+                        try:
+                            sent = await m.copy(gid)
+                            add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                        except Exception as copy_e:
+                            logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
             except Exception as e:
                 logger.error(f"Edit sync failed to {gid}: {e}")
 
