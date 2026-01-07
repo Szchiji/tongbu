@@ -495,11 +495,11 @@ async def sync_message(c, m):
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
             try:
-                sent = await m.copy(gid)
+                sent = await m.forward(gid)
                 # Store message mapping for edit/delete sync
                 add_message_mapping(m.chat.id, m.id, gid, sent.id)
             except Exception as e:
-                logger.error(f"Copy failed to {gid}: {e}")
+                logger.error(f"Forward failed to {gid}: {e}")
 
 @app_tg.on_edited_message(filters.group)
 async def sync_edit(c, m):
@@ -548,15 +548,15 @@ async def sync_edit(c, m):
                             logger.info(f"Edited text of message {target_msg_id} in {gid}")
                         else:
                             # Message type cannot be edited (e.g., stickers, files without text/caption changes)
-                            raise Exception("Message type does not support editing, will copy as new")
+                            raise Exception("Message type does not support editing, will forward as new")
                     except Exception as e:
-                        # If edit fails (e.g., message type changed), copy as new
-                        logger.warning(f"Edit failed for {gid}, copying as new: {e}")
-                        sent = await m.copy(gid)
+                        # If edit fails (e.g., message type changed), forward as new
+                        logger.warning(f"Edit failed for {gid}, forwarding as new: {e}")
+                        sent = await m.forward(gid)
                         add_message_mapping(m.chat.id, m.id, gid, sent.id)
                 else:
-                    # No mapping found, copy as new message
-                    sent = await m.copy(gid)
+                    # No mapping found, forward as new message
+                    sent = await m.forward(gid)
                     add_message_mapping(m.chat.id, m.id, gid, sent.id)
             except Exception as e:
                 logger.error(f"Edit sync failed to {gid}: {e}")
