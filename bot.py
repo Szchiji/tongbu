@@ -3,6 +3,7 @@ from pyrogram import Client, filters, types
 from pyrogram.types import ChatPrivileges
 import asyncio
 import os
+import sys
 import json
 import logging
 import threading  # 用于后台运行 Flask
@@ -16,6 +17,42 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Validate required environment variables before starting
+# This prevents EOFError when Pyrogram tries to prompt for missing values in non-interactive environments
+def validate_env_vars():
+    """Validate required environment variables are set and non-empty"""
+    missing = []
+    
+    api_id = os.getenv("API_ID")
+    if not api_id:
+        missing.append("API_ID")
+    
+    api_hash = os.getenv("API_HASH")
+    if not api_hash:
+        missing.append("API_HASH")
+    
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token:
+        missing.append("BOT_TOKEN")
+    
+    owner_id = os.getenv("OWNER_ID")
+    if not owner_id:
+        missing.append("OWNER_ID")
+    
+    if missing:
+        logger.error(f"Missing required environment variables: {', '.join(missing)}")
+        logger.error("Please set these environment variables before starting the bot:")
+        logger.error("  API_ID     - Your Telegram API ID from https://my.telegram.org")
+        logger.error("  API_HASH   - Your Telegram API Hash from https://my.telegram.org")
+        logger.error("  BOT_TOKEN  - Your bot token from @BotFather")
+        logger.error("  OWNER_ID   - Your Telegram user ID")
+        sys.exit(1)
+    
+    return api_id, api_hash, bot_token, owner_id
+
+# Validate environment variables
+API_ID, API_HASH, BOT_TOKEN, OWNER_ID_STR = validate_env_vars()
 
 # Data persistence file path
 DATA_FILE = "bot_data.json"
@@ -35,9 +72,9 @@ if REDIS_URL:
 
 app_tg = Client(  # 改名，避免和 Flask 冲突
     "tg_sync_bot",
-    api_id=int(os.getenv("API_ID")),
-    api_hash=os.getenv("API_HASH"),
-    bot_token=os.getenv("BOT_TOKEN", None)  # 不填就用用户号
+    api_id=int(API_ID),
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
 )
 
 SYNC_GROUPS = set()          # 自动保存同步群，无上限
@@ -45,7 +82,7 @@ REQUIRED_CHANNELS = []       # 强制关注的频道列表
 WELCOME_TEXT = "欢迎！请先关注以下频道才能发言，关注完成后自动解禁～"
 
 # 管理员列表（初始只放您的 OWNER_ID）
-OWNER_ID = int(os.getenv("OWNER_ID"))
+OWNER_ID = int(OWNER_ID_STR)
 ADMINS = [OWNER_ID]  # 支持多个，动态添加
 
 # Bot ID cache
@@ -652,8 +689,7 @@ secret_key = os.getenv("SECRET_KEY")
 if not secret_key:
     # Use BOT_TOKEN as seed for consistent secret key across restarts
     import hashlib
-    bot_token = os.getenv("BOT_TOKEN", "")
-    secret_key = hashlib.sha256(bot_token.encode()).hexdigest()
+    secret_key = hashlib.sha256(BOT_TOKEN.encode()).hexdigest()
 flask_app.secret_key = secret_key
 
 # Import and initialize web routes
