@@ -453,40 +453,6 @@ async def check_and_unban(c, cq):
     else:
         await cq.answer("检测到你还没关注完哦～", show_alert=True)
 
-# —— Helper function to get sender display name ——
-def get_sender_name(m):
-    """Get the display name of the message sender"""
-    if m.from_user:
-        # User message - show name
-        user = m.from_user
-        # Build name from available info, with fallback chain
-        if user.first_name:
-            name = user.first_name
-            if user.last_name:
-                name += " " + user.last_name
-        elif user.username:
-            name = "@" + user.username
-        else:
-            name = f"User {user.id}"
-        
-        # Add bot indicator if it's a bot
-        if user.is_bot:
-            name += " 🤖"
-        
-        return name
-    elif m.sender_chat:
-        # Channel/anonymous admin message
-        chat = m.sender_chat
-        return chat.title or f"Channel {chat.id}"
-    else:
-        return "Unknown"
-
-def get_source_group_name(m):
-    """Get the name of the source group"""
-    if m.chat:
-        return m.chat.title or f"Group {m.chat.id}"
-    return "Unknown Group"
-
 # —— 核心同步（发消息、删、编辑全同步）——
 # Use dynamic filter to check if message is from a sync group
 # Note: If running as a bot account, Telegram doesn't deliver messages from other bots.
@@ -538,42 +504,20 @@ async def sync_message(c, m):
     elif is_from_channel:
         logger.debug(f"Syncing message from channel/sender_chat {m.sender_chat.id} in group {m.chat.id}")
     
-    # Get sender name and source group for the synced message
-    sender_name = get_sender_name(m)
-    source_group = get_source_group_name(m)
-    sender_header = f"👤 {sender_name}（来自 {source_group}）:\n\n"
-    
-    # Sync to all other groups using copy() with sender info
+    # Sync to all other groups
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
             try:
-                # Use copy with sender info prepended to caption/text
-                if m.text:
-                    # Text message - prepend sender info
-                    # Preserve web page preview behavior from original message
-                    # (disable preview if original didn't have one)
-                    sent = await c.send_message(
-                        chat_id=gid,
-                        text=sender_header + m.text,
-                        disable_web_page_preview=(m.web_page is None)
-                    )
-                elif m.media:
-                    # Media message - add sender info to caption
-                    new_caption = sender_header + (m.caption or "")
-                    sent = await m.copy(gid, caption=new_caption)
-                else:
-                    # Other message types (stickers, etc.) - just copy
-                    sent = await m.copy(gid)
-                
+                sent = await m.forward(gid)
                 # Store message mapping for edit/delete sync
                 add_message_mapping(m.chat.id, m.id, gid, sent.id)
             except Exception as e:
-                logger.error(f"Sync failed to {gid}: {e}")
-                # Try simple copy as fallback
+                logger.error(f"Forward failed to {gid}: {e}")
+                # Try copy_message as fallback if forward fails
                 try:
                     sent = await m.copy(gid)
                     add_message_mapping(m.chat.id, m.id, gid, sent.id)
-                    logger.info(f"Used simple copy as fallback for message to {gid}")
+                    logger.info(f"Used copy as fallback for message to {gid}")
                 except Exception as copy_e:
                     logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
 
@@ -604,11 +548,6 @@ async def sync_edit(c, m):
     # Try to use message mapping to edit the synced messages
     mapping = get_message_mapping(m.chat.id, m.id)
     
-    # Get sender info for new messages (in case we need to send as new)
-    sender_name = get_sender_name(m)
-    source_group = get_source_group_name(m)
-    sender_header = f"👤 {sender_name}（来自 {source_group}）:\n\n"
-    
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
             try:
@@ -617,63 +556,50 @@ async def sync_edit(c, m):
                 if target_msg_id:
                     try:
                         # Determine message type and use appropriate edit method
-                        # Note: We need to preserve the sender header when editing
                         if m.media:
-                            # It's a media message - edit caption with sender header
-                            new_caption = sender_header + (m.caption or "")
+                            # It's a media message - edit caption (can be empty or None)
                             await c.edit_message_caption(
                                 chat_id=gid,
                                 message_id=target_msg_id,
-                                caption=new_caption
+                                caption=m.caption or ""
                             )
                             logger.info(f"Edited caption of message {target_msg_id} in {gid}")
                         elif m.text:
-                            # It's a text message - edit text with sender header
-                            new_text = sender_header + m.text
+                            # It's a text message
                             await c.edit_message_text(
                                 chat_id=gid,
                                 message_id=target_msg_id,
-                                text=new_text
+                                text=m.text
                             )
                             logger.info(f"Edited text of message {target_msg_id} in {gid}")
                         else:
                             # Message type cannot be edited (e.g., stickers, files without text/caption changes)
-                            raise Exception("Message type does not support editing, will send as new")
+                            raise Exception("Message type does not support editing, will forward as new")
                     except Exception as e:
-                        # If edit fails, send as new message with sender info
-                        logger.warning(f"Edit failed for {gid}, sending as new: {e}")
+                        # If edit fails (e.g., message type changed), forward as new
+                        logger.warning(f"Edit failed for {gid}, forwarding as new: {e}")
                         try:
-                            if m.text:
-                                sent = await c.send_message(
-                                    chat_id=gid,
-                                    text=sender_header + m.text,
-                                    disable_web_page_preview=(m.web_page is None)
-                                )
-                            elif m.media:
-                                new_caption = sender_header + (m.caption or "")
-                                sent = await m.copy(gid, caption=new_caption)
-                            else:
+                            sent = await m.forward(gid)
+                            add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                        except Exception as fwd_e:
+                            logger.error(f"Forward failed, trying copy: {fwd_e}")
+                            try:
                                 sent = await m.copy(gid)
+                                add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                            except Exception as copy_e:
+                                logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
+                else:
+                    # No mapping found, forward as new message
+                    try:
+                        sent = await m.forward(gid)
+                        add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                    except Exception as fwd_e:
+                        logger.error(f"Forward failed, trying copy: {fwd_e}")
+                        try:
+                            sent = await m.copy(gid)
                             add_message_mapping(m.chat.id, m.id, gid, sent.id)
                         except Exception as copy_e:
-                            logger.error(f"Send as new failed to {gid}: {copy_e}")
-                else:
-                    # No mapping found, send as new message with sender info
-                    try:
-                        if m.text:
-                            sent = await c.send_message(
-                                chat_id=gid,
-                                text=sender_header + m.text,
-                                disable_web_page_preview=(m.web_page is None)
-                            )
-                        elif m.media:
-                            new_caption = sender_header + (m.caption or "")
-                            sent = await m.copy(gid, caption=new_caption)
-                        else:
-                            sent = await m.copy(gid)
-                        add_message_mapping(m.chat.id, m.id, gid, sent.id)
-                    except Exception as copy_e:
-                        logger.error(f"Send as new failed to {gid}: {copy_e}")
+                            logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
             except Exception as e:
                 logger.error(f"Edit sync failed to {gid}: {e}")
 
