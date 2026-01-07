@@ -476,9 +476,9 @@ async def sync_message(c, m):
     if m.empty:
         return
     
-    # Skip forwarded messages to prevent duplicate sync
-    # When we forward a message to another group, it triggers on_message again
-    # Forwarded messages have forward_date attribute set
+    # Skip forwarded messages to prevent syncing user-forwarded content
+    # Messages manually forwarded by users have forward_date attribute set
+    # We skip these to avoid duplicate sync of already forwarded content
     if m.forward_date:
         return
     
@@ -511,21 +511,17 @@ async def sync_message(c, m):
         logger.debug(f"Syncing message from channel/sender_chat {m.sender_chat.id} in group {m.chat.id}")
     
     # Sync to all other groups
+    # Use copy() instead of forward() to:
+    # 1. Hide the "Forwarded from..." header (隐藏消息引用)
+    # 2. Allow syncing messages from other bots (转发其他机器人发送的内容)
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
             try:
-                sent = await m.forward(gid)
+                sent = await m.copy(gid)
                 # Store message mapping for edit/delete sync
                 add_message_mapping(m.chat.id, m.id, gid, sent.id)
             except Exception as e:
-                logger.error(f"Forward failed to {gid}: {e}")
-                # Try copy_message as fallback if forward fails
-                try:
-                    sent = await m.copy(gid)
-                    add_message_mapping(m.chat.id, m.id, gid, sent.id)
-                    logger.info(f"Used copy as fallback for message to {gid}")
-                except Exception as copy_e:
-                    logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
+                logger.error(f"Copy failed to {gid}: {e}")
 
 @app_tg.on_edited_message(filters.group)
 async def sync_edit(c, m):
@@ -537,7 +533,7 @@ async def sync_edit(c, m):
     if m.chat.id not in SYNC_GROUPS:
         return
     
-    # Skip forwarded messages to prevent duplicate sync
+    # Skip forwarded messages to prevent syncing user-forwarded content
     if m.forward_date:
         return
     
@@ -588,28 +584,20 @@ async def sync_edit(c, m):
                     except Exception as e:
                         # If edit fails (e.g., message type changed), forward as new
                         logger.warning(f"Edit failed for {gid}, forwarding as new: {e}")
-                        try:
-                            sent = await m.forward(gid)
-                            add_message_mapping(m.chat.id, m.id, gid, sent.id)
-                        except Exception as fwd_e:
-                            logger.error(f"Forward failed, trying copy: {fwd_e}")
-                            try:
-                                sent = await m.copy(gid)
-                                add_message_mapping(m.chat.id, m.id, gid, sent.id)
-                            except Exception as copy_e:
-                                logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
-                else:
-                    # No mapping found, forward as new message
-                    try:
-                        sent = await m.forward(gid)
-                        add_message_mapping(m.chat.id, m.id, gid, sent.id)
-                    except Exception as fwd_e:
-                        logger.error(f"Forward failed, trying copy: {fwd_e}")
+                        # Use copy() to hide forward header
                         try:
                             sent = await m.copy(gid)
                             add_message_mapping(m.chat.id, m.id, gid, sent.id)
                         except Exception as copy_e:
-                            logger.error(f"Copy fallback also failed to {gid}: {copy_e}")
+                            logger.error(f"Copy failed to {gid}: {copy_e}")
+                else:
+                    # No mapping found, copy as new message
+                    # Use copy() to hide forward header
+                    try:
+                        sent = await m.copy(gid)
+                        add_message_mapping(m.chat.id, m.id, gid, sent.id)
+                    except Exception as copy_e:
+                        logger.error(f"Copy failed to {gid}: {copy_e}")
             except Exception as e:
                 logger.error(f"Edit sync failed to {gid}: {e}")
 
