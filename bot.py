@@ -6,7 +6,6 @@ import os
 import json
 import logging
 import threading  # 用于后台运行 Flask
-import signal  # 用于优雅关闭
 import atexit  # 用于退出时保存数据
 from flask import Flask  # 新增：Flask 库
 import redis  # Redis 数据库
@@ -211,13 +210,14 @@ def delete_message_mapping(original_chat_id, original_msg_id):
 def cleanup_old_mappings(max_entries=10000):
     """Clean up old message mappings to prevent memory growth
     Keeps only the most recent max_entries mappings
+    Uses insertion order since Python 3.7+ dicts maintain order
     """
     global MESSAGE_MAPPING
     if len(MESSAGE_MAPPING) > max_entries:
-        # Sort keys and keep only the most recent ones
-        # Since keys are chat_id:msg_id, we can sort by msg_id (roughly chronological)
-        sorted_keys = sorted(MESSAGE_MAPPING.keys(), key=lambda k: int(k.split(':')[1]))
-        keys_to_remove = sorted_keys[:-max_entries]
+        # Python 3.7+ dicts maintain insertion order, so we can use that
+        # Get all keys and keep only the most recent ones
+        all_keys = list(MESSAGE_MAPPING.keys())
+        keys_to_remove = all_keys[:-max_entries]
         for key in keys_to_remove:
             del MESSAGE_MAPPING[key]
         save_message_mapping()
@@ -321,9 +321,9 @@ async def add_group(c, m):
     except ValueError:
         return await m.reply("❌ 无效的群组 ID 格式！群组 ID 应为数字，通常以 -100 开头。")
     
-    # Validate group ID format (supergroups/channels start with -100)
+    # Warn if group ID format looks unusual (but still allow it)
     if group_id > 0:
-        return await m.reply("⚠️ 群组 ID 应为负数，通常以 -100 开头。\n💡 可通过转发群消息到 @userinfobot 获取正确的群组 ID。")
+        await m.reply("⚠️ 注意：群组 ID 通常为负数（以 -100 开头）。如果同步不工作，请确认 ID 正确。\n💡 可通过转发群消息到 @userinfobot 获取正确的群组 ID。")
     
     if group_id in SYNC_GROUPS:
         return await m.reply(f"群组 {group_id} 已在同步列表中！")

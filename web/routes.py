@@ -1,6 +1,5 @@
 from functools import wraps
 from flask import session, request, render_template, redirect, url_for, flash
-from datetime import timedelta
 import logging
 import time
 
@@ -23,8 +22,9 @@ def admin_required(f):
             
             if current_time - last_activity > SESSION_TIMEOUT:
                 # Session expired
+                expired_admin_id = session.get('admin_id')
                 session.clear()
-                logger.info(f"Session expired for admin {session.get('admin_id')}")
+                logger.info(f"Session expired for admin {expired_admin_id}")
                 return "⏱️ 会话已过期，请通过机器人 /admin 命令重新获取链接", 403
             
             # Update last activity time
