@@ -60,6 +60,7 @@ MESSAGE_MAPPING_COUNTER = 0  # Counter for periodic saves
 # Format: {"chat_id:msg_id": timestamp}
 # Used to detect messages that were sent by this bot as part of sync
 SYNCED_MESSAGES = {}
+SYNCED_MESSAGES_COUNTER = 0  # Counter for periodic cleanup
 
 # —— Data Persistence Functions ——
 def save_to_redis(key, value):
@@ -240,9 +241,17 @@ def mark_message_as_synced(chat_id, msg_id):
     """Mark a message as synced by this bot
     
     This is used to prevent re-syncing messages that we sent as part of sync.
+    Also triggers periodic cleanup to prevent memory growth.
     """
+    global SYNCED_MESSAGES_COUNTER
     key = f"{chat_id}:{msg_id}"
     SYNCED_MESSAGES[key] = time.time()
+    
+    # Periodic cleanup (every 100 new entries)
+    SYNCED_MESSAGES_COUNTER += 1
+    if SYNCED_MESSAGES_COUNTER >= 100:
+        cleanup_synced_messages()
+        SYNCED_MESSAGES_COUNTER = 0
 
 def is_synced_message(chat_id, msg_id):
     """Check if a message was synced by this bot
@@ -252,10 +261,11 @@ def is_synced_message(chat_id, msg_id):
     key = f"{chat_id}:{msg_id}"
     return key in SYNCED_MESSAGES
 
-def cleanup_synced_messages(max_age_seconds=3600):
+def cleanup_synced_messages(max_age_seconds=3600, max_entries=10000):
     """Clean up old synced message tracking entries
     
     Removes entries older than max_age_seconds to prevent memory growth.
+    Also limits total entries to max_entries.
     """
     current_time = time.time()
     keys_to_remove = [
@@ -264,6 +274,16 @@ def cleanup_synced_messages(max_age_seconds=3600):
     ]
     for key in keys_to_remove:
         del SYNCED_MESSAGES[key]
+    
+    # Also limit total entries if still too many
+    if len(SYNCED_MESSAGES) > max_entries:
+        # Remove oldest entries
+        sorted_items = sorted(SYNCED_MESSAGES.items(), key=lambda x: x[1])
+        num_to_remove = len(SYNCED_MESSAGES) - max_entries
+        for key, _ in sorted_items[:num_to_remove]:
+            del SYNCED_MESSAGES[key]
+        keys_to_remove.extend([key for key, _ in sorted_items[:num_to_remove]])
+    
     if keys_to_remove:
         logger.debug(f"Cleaned up {len(keys_to_remove)} old synced message entries")
 
@@ -533,9 +553,6 @@ async def sync_message(c, m):
     # This handles edge cases where the bot sends as anonymous admin
     if is_synced_message(m.chat.id, m.id):
         return
-    
-    # Periodically clean up old synced message entries
-    cleanup_synced_messages()
     
     # Determine if message is from a bot (for logging purposes)
     is_from_bot = m.from_user and m.from_user.is_bot
