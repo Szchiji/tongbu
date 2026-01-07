@@ -476,6 +476,12 @@ async def sync_message(c, m):
     if m.empty:
         return
     
+    # Skip forwarded messages to prevent duplicate sync
+    # When we forward a message to another group, it triggers on_message again
+    # Forwarded messages have forward_date attribute set
+    if m.forward_date:
+        return
+    
     # Skip messages from this bot/user itself to prevent infinite loops
     if m.from_user and m.from_user.id == BOT_ID:
         return
@@ -529,6 +535,10 @@ async def sync_edit(c, m):
     
     # Check if message is from a sync group
     if m.chat.id not in SYNC_GROUPS:
+        return
+    
+    # Skip forwarded messages to prevent duplicate sync
+    if m.forward_date:
         return
     
     # Skip messages from this bot/user itself to prevent infinite loops
