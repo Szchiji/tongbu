@@ -459,6 +459,7 @@ def get_sender_name(m):
     if m.from_user:
         # User message - show name
         user = m.from_user
+        # Build name from available info, with fallback chain
         if user.first_name:
             name = user.first_name
             if user.last_name:
@@ -549,10 +550,12 @@ async def sync_message(c, m):
                 # Use copy with sender info prepended to caption/text
                 if m.text:
                     # Text message - prepend sender info
+                    # Preserve web page preview behavior from original message
+                    # (disable preview if original didn't have one)
                     sent = await c.send_message(
                         chat_id=gid,
                         text=sender_header + m.text,
-                        disable_web_page_preview=not m.web_page
+                        disable_web_page_preview=(m.web_page is None)
                     )
                 elif m.media:
                     # Media message - add sender info to caption
@@ -644,7 +647,7 @@ async def sync_edit(c, m):
                                 sent = await c.send_message(
                                     chat_id=gid,
                                     text=sender_header + m.text,
-                                    disable_web_page_preview=not m.web_page
+                                    disable_web_page_preview=(m.web_page is None)
                                 )
                             elif m.media:
                                 new_caption = sender_header + (m.caption or "")
@@ -661,7 +664,7 @@ async def sync_edit(c, m):
                             sent = await c.send_message(
                                 chat_id=gid,
                                 text=sender_header + m.text,
-                                disable_web_page_preview=not m.web_page
+                                disable_web_page_preview=(m.web_page is None)
                             )
                         elif m.media:
                             new_caption = sender_header + (m.caption or "")
