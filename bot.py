@@ -6,6 +6,8 @@ import os
 import json
 import logging
 import threading  # 用于后台运行 Flask
+import signal  # 用于优雅关闭
+import atexit  # 用于退出时保存数据
 from flask import Flask  # 新增：Flask 库
 import redis  # Redis 数据库
 
@@ -206,6 +208,66 @@ def delete_message_mapping(original_chat_id, original_msg_id):
         del MESSAGE_MAPPING[key]
         save_message_mapping()
 
+def cleanup_old_mappings(max_entries=10000):
+    """Clean up old message mappings to prevent memory growth
+    Keeps only the most recent max_entries mappings
+    """
+    global MESSAGE_MAPPING
+    if len(MESSAGE_MAPPING) > max_entries:
+        # Sort keys and keep only the most recent ones
+        # Since keys are chat_id:msg_id, we can sort by msg_id (roughly chronological)
+        sorted_keys = sorted(MESSAGE_MAPPING.keys(), key=lambda k: int(k.split(':')[1]))
+        keys_to_remove = sorted_keys[:-max_entries]
+        for key in keys_to_remove:
+            del MESSAGE_MAPPING[key]
+        save_message_mapping()
+        logger.info(f"Cleaned up {len(keys_to_remove)} old message mappings")
+
+# —— /start 和 /help 命令 ——
+@app_tg.on_message(filters.private & filters.command("start"))
+async def start_cmd(c, m):
+    user_id = m.from_user.id
+    if user_id in ADMINS:
+        await m.reply(
+            "👋 **欢迎使用群组同步机器人！**\n\n"
+            "您已是管理员，可以使用 /help 查看可用命令。\n"
+            "或使用 /admin 进入 Web 管理后台。"
+        )
+    else:
+        await m.reply(
+            "👋 **欢迎使用群组同步机器人！**\n\n"
+            "此机器人用于同步多个群组的消息。\n"
+            "如需使用，请联系管理员将您添加为机器人管理员。"
+        )
+
+@app_tg.on_message(filters.private & filters.command("help") & filters.user(ADMINS))
+async def help_cmd(c, m):
+    help_text = """
+📖 **机器人命令帮助**
+
+**群组管理：**
+• `/addgroup -100群ID` - 添加群组到同步列表
+• `/removegroup -100群ID` - 从同步列表移除群组
+• `/addall` - 添加机器人所在的所有群组
+
+**频道管理：**
+• `/setchannel @频道1 @频道2` - 设置强制关注频道
+• `/setchannel` - 清空强制关注频道
+
+**管理员管理：**
+• `/addadmin 用户ID` 或 `/addadmin @用户名` - 添加管理员
+• `/deladmin 用户ID` - 删除管理员
+• `/listadmins` - 查看管理员列表
+
+**其他：**
+• `/status` - 查看机器人状态
+• `/admin` - 进入 Web 管理后台
+• `/help` - 显示此帮助信息
+
+💡 **提示：** 群组 ID 通常以 -100 开头，可通过转发群消息到 @userinfobot 获取。
+"""
+    await m.reply(help_text)
+
 # —— 新命令：添加/删除管理员 ——
 @app_tg.on_message(filters.private & filters.command("addadmin") & filters.user(ADMINS))
 async def add_admin(c, m):
@@ -232,7 +294,10 @@ async def add_admin(c, m):
 async def del_admin(c, m):
     if len(m.text.split()) < 2:
         return await m.reply("用法: /deladmin 用户ID")
-    user_id = int(m.text.split()[1])
+    try:
+        user_id = int(m.text.split()[1])
+    except ValueError:
+        return await m.reply("❌ 无效的用户 ID 格式！")
     if user_id == OWNER_ID:
         return await m.reply("不能删除主人！")
     if user_id in ADMINS:
@@ -250,17 +315,31 @@ async def list_admins(c, m):
 @app_tg.on_message(filters.private & filters.command("addgroup") & filters.user(ADMINS))
 async def add_group(c, m):
     if len(m.text.split()) < 2:
-        return await m.reply("用法: /addgroup -100群ID")
-    group_id = int(m.text.split()[1])
+        return await m.reply("用法: /addgroup -100群ID\n💡 群组 ID 通常以 -100 开头")
+    try:
+        group_id = int(m.text.split()[1])
+    except ValueError:
+        return await m.reply("❌ 无效的群组 ID 格式！群组 ID 应为数字，通常以 -100 开头。")
+    
+    # Validate group ID format (supergroups/channels start with -100)
+    if group_id > 0:
+        return await m.reply("⚠️ 群组 ID 应为负数，通常以 -100 开头。\n💡 可通过转发群消息到 @userinfobot 获取正确的群组 ID。")
+    
+    if group_id in SYNC_GROUPS:
+        return await m.reply(f"群组 {group_id} 已在同步列表中！")
+    
     SYNC_GROUPS.add(group_id)
     save_sync_groups()
-    await m.reply(f"已添加群 {group_id} 到同步列表！当前总 {len(SYNC_GROUPS)} 个。")
+    await m.reply(f"✓ 已添加群 {group_id} 到同步列表！当前总 {len(SYNC_GROUPS)} 个。")
 
 @app_tg.on_message(filters.private & filters.command("removegroup") & filters.user(ADMINS))
 async def remove_group(c, m):
     if len(m.text.split()) < 2:
         return await m.reply("用法: /removegroup -100群ID")
-    group_id = int(m.text.split()[1])
+    try:
+        group_id = int(m.text.split()[1])
+    except ValueError:
+        return await m.reply("❌ 无效的群组 ID 格式！")
     if group_id in SYNC_GROUPS:
         SYNC_GROUPS.remove(group_id)
         save_sync_groups()
@@ -541,12 +620,25 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))  # Render 默认端口 10000
     flask_app.run(host='0.0.0.0', port=port)
 
+def graceful_shutdown():
+    """Save all data before shutdown"""
+    logger.info("正在保存数据...")
+    save_data()
+    save_message_mapping()
+    logger.info("数据保存完成，机器人关闭")
+
+# Register atexit handler
+atexit.register(graceful_shutdown)
+
 if __name__ == "__main__":
     # Load persistent data
     load_data()
     
     # Load message mappings
     load_message_mapping()
+    
+    # Clean up old mappings if too many
+    cleanup_old_mappings()
     
     # 启动 Flask 在后台线程
     threading.Thread(target=run_flask, daemon=True).start()

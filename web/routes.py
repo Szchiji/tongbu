@@ -1,8 +1,13 @@
 from functools import wraps
 from flask import session, request, render_template, redirect, url_for, flash
+from datetime import timedelta
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+
+# Session timeout in seconds (30 minutes)
+SESSION_TIMEOUT = 30 * 60
 
 def admin_required(f):
     """Decorator to check if user is authenticated as admin"""
@@ -12,6 +17,18 @@ def admin_required(f):
         
         # Check if session has logged-in admin
         if session.get('admin_id'):
+            # Check session timeout
+            last_activity = session.get('last_activity', 0)
+            current_time = time.time()
+            
+            if current_time - last_activity > SESSION_TIMEOUT:
+                # Session expired
+                session.clear()
+                logger.info(f"Session expired for admin {session.get('admin_id')}")
+                return "⏱️ 会话已过期，请通过机器人 /admin 命令重新获取链接", 403
+            
+            # Update last activity time
+            session['last_activity'] = current_time
             return f(*args, **kwargs)
         
         # Check token in URL
@@ -24,6 +41,7 @@ def admin_required(f):
                     if user_id in ADMINS:
                         # Set session
                         session['admin_id'] = user_id
+                        session['last_activity'] = time.time()
                         # Delete used token
                         r.delete(f"admin_token:{token}")
                         logger.info(f"Admin {user_id} logged in via token")
