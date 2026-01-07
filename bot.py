@@ -84,64 +84,70 @@ def save_channels():
         save_data()
 
 def load_data():
-    """Load persistent data from Redis or JSON file"""
-    global SYNC_GROUPS, REQUIRED_CHANNELS, ADMINS
+    """Load persistent data from Redis or JSON file
+    
+    Note: We use in-place modifications (clear + update/extend) instead of
+    reassignment to preserve references across modules. The web routes module
+    imports these variables at init time, and reassigning them would cause
+    the routes to use stale references.
+    """
     if r:
         # Load from Redis
         try:
-            # Load sync groups
+            # Load sync groups (in-place update to preserve references)
             sync_groups_data = r.get("sync_groups")
+            SYNC_GROUPS.clear()
             if sync_groups_data:
-                SYNC_GROUPS = set(json.loads(sync_groups_data))
-            else:
-                SYNC_GROUPS = set()
+                SYNC_GROUPS.update(json.loads(sync_groups_data))
             
-            # Load admins
+            # Load admins (in-place update to preserve references)
             admins_data = r.get("admins")
+            ADMINS.clear()
             if admins_data:
                 loaded_admins = json.loads(admins_data)
                 # Ensure OWNER_ID is always in ADMINS
                 if OWNER_ID not in loaded_admins:
                     loaded_admins.append(OWNER_ID)
-                ADMINS = loaded_admins
+                ADMINS.extend(loaded_admins)
             else:
-                ADMINS = [OWNER_ID]
+                ADMINS.append(OWNER_ID)
             
-            # Load channels
+            # Load channels (in-place update to preserve references)
             channels_data = r.get("channels")
+            REQUIRED_CHANNELS.clear()
             if channels_data:
-                REQUIRED_CHANNELS = json.loads(channels_data)
-            else:
-                REQUIRED_CHANNELS = []
+                REQUIRED_CHANNELS.extend(json.loads(channels_data))
             
             logger.info(f"Loaded data from Redis: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins")
         except Exception as e:
             logger.error(f"Error loading data from Redis: {e}")
-            # Use defaults
-            SYNC_GROUPS = set()
-            REQUIRED_CHANNELS = []
-            ADMINS = [OWNER_ID]
+            # Keep existing data on error (don't clear)
     else:
         # Load from JSON file (fallback for local testing)
         try:
             if os.path.exists(DATA_FILE):
                 with open(DATA_FILE, 'r') as f:
                     json_data = json.load(f)
-                    SYNC_GROUPS = set(json_data.get('sync_groups', []))
-                    REQUIRED_CHANNELS = json_data.get('required_channels', [])
-                    ADMINS = json_data.get('admins', [OWNER_ID])
+                    # In-place updates to preserve references
+                    SYNC_GROUPS.clear()
+                    SYNC_GROUPS.update(json_data.get('sync_groups', []))
+                    
+                    REQUIRED_CHANNELS.clear()
+                    REQUIRED_CHANNELS.extend(json_data.get('required_channels', []))
+                    
+                    ADMINS.clear()
+                    loaded_admins = json_data.get('admins', [OWNER_ID])
                     # Ensure OWNER_ID is always in ADMINS
-                    if OWNER_ID not in ADMINS:
-                        ADMINS.append(OWNER_ID)
+                    if OWNER_ID not in loaded_admins:
+                        loaded_admins.append(OWNER_ID)
+                    ADMINS.extend(loaded_admins)
+                    
                     logger.info(f"Loaded data from JSON: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins")
             else:
                 logger.info("No data file found, starting with defaults")
         except Exception as e:
             logger.error(f"Error loading data from JSON: {e}")
-            # Use defaults
-            SYNC_GROUPS = set()
-            REQUIRED_CHANNELS = []
-            ADMINS = [OWNER_ID]
+            # Keep existing data on error (don't clear)
 
 def save_data():
     """Save persistent data to JSON file"""
