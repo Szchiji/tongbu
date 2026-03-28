@@ -34,10 +34,16 @@ if REDIS_URL:
         logger.info("Falling back to JSON file storage")
         r = None
 
+# 使用 Pyrogram 官方默认 API
+# 如果需要自己的 API，可以设置环境变量 API_ID 和 API_HASH
+api_id = int(os.getenv("API_ID", "6"))  # Pyrogram 官方测试 ID
+api_hash = os.getenv("API_HASH", "eb06d64bfb670183")  # Pyrogram 官方测试 Hash
+
 app_tg = Client(  # 改名，避免和 Flask 冲突
     "tg_sync_bot",
-    bot_token=os.getenv("BOT_TOKEN", None)  # 不填就用用户号
-    # 使用 Pyrogram 内置的默认 API ID 和 Hash，无需配置 API_ID / API_HASH
+    api_id=api_id,
+    api_hash=api_hash,
+    bot_token=os.getenv("BOT_TOKEN", None)
 )
 
 SYNC_GROUPS = set()          # 自动保存同步群，无上限
