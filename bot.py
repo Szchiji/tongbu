@@ -34,17 +34,50 @@ if REDIS_URL:
         logger.info("Falling back to JSON file storage")
         r = None
 
-# 使用 Pyrogram 官方默认 API
-# 如果需要自己的 API，可以设置环境变量 API_ID 和 API_HASH
-api_id = int(os.getenv("API_ID", "6"))  # Pyrogram 官方测试 ID
-api_hash = os.getenv("API_HASH", "eb06d64bfb670183")  # Pyrogram 官方测试 Hash
+# API 凭证处理 —— API_ID 和 API_HASH 必须显式设置
+_api_id_str = os.getenv("API_ID")
+_api_hash = os.getenv("API_HASH")
+_bot_token = os.getenv("BOT_TOKEN")
+_session_string = os.getenv("SESSION_STRING")
 
-app_tg = Client(  # 改名，避免和 Flask 冲突
-    "tg_sync_bot",
-    api_id=api_id,
-    api_hash=api_hash,
-    bot_token=os.getenv("BOT_TOKEN", None)
-)
+if not _api_id_str or not _api_hash:
+    logger.error(
+        "缺少 API 凭证：必须设置 API_ID 和 API_HASH 环境变量。"
+        "请访问 https://my.telegram.org/apps 获取您自己的 API 凭证。"
+    )
+    raise SystemExit(1)
+
+try:
+    api_id = int(_api_id_str)
+except ValueError:
+    logger.error(f"API_ID 必须为整数，当前值: {_api_id_str!r}")
+    raise SystemExit(1)
+
+api_hash = _api_hash
+
+if not _bot_token and not _session_string:
+    logger.error(
+        "缺少认证信息：必须设置 BOT_TOKEN（机器人模式）"
+        "或 SESSION_STRING（用户账户模式）环境变量。"
+    )
+    raise SystemExit(1)
+
+if _bot_token:
+    logger.info("使用机器人账户模式（BOT_TOKEN）")
+    app_tg = Client(  # 改名，避免和 Flask 冲突
+        "tg_sync_bot",
+        api_id=api_id,
+        api_hash=api_hash,
+        bot_token=_bot_token,
+    )
+else:
+    logger.info("使用用户账户模式（SESSION_STRING）")
+    app_tg = Client(  # 改名，避免和 Flask 冲突
+        "tg_sync_bot",
+        api_id=api_id,
+        api_hash=api_hash,
+        session_string=_session_string,
+    )
 
 SYNC_GROUPS = set()          # 自动保存同步群，无上限
 REQUIRED_CHANNELS = []       # 强制关注的频道列表
