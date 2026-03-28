@@ -77,10 +77,25 @@ railway up
 | `SECRET_KEY` | ⚡ | Flask Session 密钥（可选，不填自动生成） | `random_secret_key_here` |
 | `REDIS_URL` | ⚠️ | Redis 数据库连接 URL（Railway 自动注入） | `redis://default:password@host:port` |
 | `PORT` | ⚠️ | HTTP 服务端口（Railway 自动注入） | `10000` |
+| `API_ID` | ⚡ | Telegram API ID（可选，高级配置） | `12345678` |
+| `API_HASH` | ⚡ | Telegram API Hash（可选，高级配置） | `0123456789abcdef0123456789abcdef` |
 
 **注意**：
 - `REDIS_URL` 环境变量在 Railway 部署时会自动注入。如果不存在此变量，机器人会回退到使用本地 JSON 文件存储数据（适用于本地测试）。
 - `BASE_URL` 用于生成 Web 管理后台的访问链接，部署后可在 Railway 项目设置中查看你的应用地址。
+
+### 高级配置：自定义 API_ID 和 API_HASH
+
+机器人默认使用 Pyrogram 官方测试 API（`API_ID=6`），无需额外配置即可运行。
+
+如果你需要使用自己的 API 凭证（推荐用于生产环境），可以：
+
+1. 访问 https://my.telegram.org 登录你的 Telegram 账号
+2. 进入 "API development tools"
+3. 创建应用，获取 `api_id` 和 `api_hash`
+4. 在 Railway 环境变量中设置 `API_ID` 和 `API_HASH`
+
+**注意**：使用官方默认 API 可能存在速率限制，生产环境建议配置自己的 `API_ID` 和 `API_HASH`。
 
 ## 使用说明
 
