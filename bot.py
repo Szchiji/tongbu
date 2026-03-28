@@ -697,52 +697,33 @@ async def check_and_unban(c, cq):
 
 # —— 核心同步（发消息、删、编辑全同步）——
 # Use dynamic filter to check if message is from a sync group
-# Note: If running as a bot account, Telegram doesn't deliver messages from other bots.
-# To sync messages from other bots, run as a user account (leave BOT_TOKEN empty).
 @app_tg.on_message(filters.group)
 async def sync_message(c, m):
     global BOT_ID
-    # Cache bot ID on first call
     if BOT_ID is None:
         BOT_ID = (await c.get_me()).id
     
-    # Check if message is from a sync group
     if m.chat.id not in SYNC_GROUPS:
         return
     
-    # Skip service messages (join, leave, etc.)
     if m.service:
         return
     
-    # Skip empty messages
     if m.empty:
         return
     
-    # Skip forwarded messages to prevent syncing user-forwarded content
-    # Messages manually forwarded by users have forward_date attribute set
-    # We skip these to avoid duplicate sync of already forwarded content
     if m.forward_date:
         return
     
-    # Skip messages from this bot/user itself to prevent infinite loops
     if m.from_user and m.from_user.id == BOT_ID:
         return
     
-    # Skip messages sent by this bot/user as channel/sender_chat
     if m.sender_chat and m.sender_chat.id == BOT_ID:
         return
     
-    # Skip messages that were synced by this bot (deduplication check)
-    # This handles edge cases where the bot sends as anonymous admin
     if is_synced_message(m.chat.id, m.id):
         return
     
-    # Determine if message is from a bot (for logging purposes)
-    is_from_bot = m.from_user and m.from_user.is_bot
-    is_from_channel = m.sender_chat is not None
-    
-    # Check subscription only for regular users (not bots, not anonymous, not channels)
-    # Messages from other bots and channels are synced without subscription check
     if m.from_user and not m.from_user.is_bot:
         if not await is_subscribed(m.from_user.id):
             try:
@@ -751,23 +732,11 @@ async def sync_message(c, m):
                 logger.error(f"Failed to delete unsubscribed user message: {e}")
             return
     
-    # Log bot/channel messages for debugging
-    if is_from_bot:
-        logger.debug(f"Syncing message from bot {m.from_user.id} in group {m.chat.id}")
-    elif is_from_channel:
-        logger.debug(f"Syncing message from channel/sender_chat {m.sender_chat.id} in group {m.chat.id}")
-    
-    # Sync to all other groups
-    # Use copy() instead of forward() to:
-    # 1. Hide the "Forwarded from..." header (隐藏消息引用)
-    # 2. Allow syncing messages from other bots (转发其他机器人发送的内容)
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
             try:
                 sent = await m.copy(gid)
-                # Store message mapping for edit/delete sync
                 add_message_mapping(m.chat.id, m.id, gid, sent.id)
-                # Mark the synced message to prevent re-syncing
                 mark_message_as_synced(gid, sent.id)
             except Exception as e:
                 logger.error(f"Copy failed to {gid}: {e}")
@@ -778,45 +747,30 @@ async def sync_edit(c, m):
     if BOT_ID is None:
         BOT_ID = (await c.get_me()).id
     
-    # Check if message is from a sync group
     if m.chat.id not in SYNC_GROUPS:
         return
     
-    # Skip forwarded messages to prevent syncing user-forwarded content
     if m.forward_date:
         return
     
-    # Skip messages from this bot/user itself to prevent infinite loops
     if m.from_user and m.from_user.id == BOT_ID:
         return
     
-    # Skip messages sent by this bot/user as channel/sender_chat
     if m.sender_chat and m.sender_chat.id == BOT_ID:
         return
     
-    # Skip messages that were synced by this bot (deduplication check)
     if is_synced_message(m.chat.id, m.id):
         return
     
-    # Log bot/channel message edits for debugging
-    if m.from_user and m.from_user.is_bot:
-        logger.debug(f"Syncing edited message from bot {m.from_user.id} in group {m.chat.id}")
-    elif m.sender_chat:
-        logger.debug(f"Syncing edited message from channel/sender_chat {m.sender_chat.id} in group {m.chat.id}")
-    
-    # Try to use message mapping to edit the synced messages
     mapping = get_message_mapping(m.chat.id, m.id)
     
     for gid in list(SYNC_GROUPS):
         if gid != m.chat.id:
             try:
-                # If we have a mapping, try to edit the existing message
                 target_msg_id = mapping.get(str(gid))
                 if target_msg_id:
                     try:
-                        # Determine message type and use appropriate edit method
                         if m.media:
-                            # It's a media message - edit caption (can be empty or None)
                             await c.edit_message_caption(
                                 chat_id=gid,
                                 message_id=target_msg_id,
@@ -824,7 +778,6 @@ async def sync_edit(c, m):
                             )
                             logger.info(f"Edited caption of message {target_msg_id} in {gid}")
                         elif m.text:
-                            # It's a text message
                             await c.edit_message_text(
                                 chat_id=gid,
                                 message_id=target_msg_id,
@@ -832,12 +785,9 @@ async def sync_edit(c, m):
                             )
                             logger.info(f"Edited text of message {target_msg_id} in {gid}")
                         else:
-                            # Message type cannot be edited (e.g., stickers, files without text/caption changes)
                             raise Exception("Message type does not support editing, will forward as new")
                     except Exception as e:
-                        # If edit fails (e.g., message type changed), forward as new
                         logger.warning(f"Edit failed for {gid}, forwarding as new: {e}")
-                        # Use copy() to hide forward header
                         try:
                             sent = await m.copy(gid)
                             add_message_mapping(m.chat.id, m.id, gid, sent.id)
@@ -845,8 +795,6 @@ async def sync_edit(c, m):
                         except Exception as copy_e:
                             logger.error(f"Copy failed to {gid}: {copy_e}")
                 else:
-                    # No mapping found, copy as new message
-                    # Use copy() to hide forward header
                     try:
                         sent = await m.copy(gid)
                         add_message_mapping(m.chat.id, m.id, gid, sent.id)
@@ -858,37 +806,28 @@ async def sync_edit(c, m):
 
 @app_tg.on_deleted_messages(filters.group)
 async def sync_delete(c, messages):
-    # Check if messages are from a sync group
     if not messages:
         return
     
-    # Group messages by their original chat and collect mappings
     delete_targets = {}  # {target_chat_id: [msg_ids]}
     
-    # Process each deleted message
     for m in messages:
         if m.chat.id not in SYNC_GROUPS:
             continue
         
-        # Get the message mapping
         mapping = get_message_mapping(m.chat.id, m.id)
         
         if mapping:
-            # Collect target messages to delete
             for gid_str, target_msg_id in mapping.items():
                 gid = int(gid_str)
                 if gid != m.chat.id:
                     if gid not in delete_targets:
                         delete_targets[gid] = []
                     delete_targets[gid].append(target_msg_id)
-            
-            # Clean up the mapping
             delete_message_mapping(m.chat.id, m.id)
         else:
-            # No mapping found, just log it
             logger.info(f"Message {m.id} deleted in {m.chat.id}, but no mapping found")
     
-    # Batch delete messages by group
     for gid, msg_ids in delete_targets.items():
         try:
             await c.delete_messages(gid, msg_ids)
@@ -903,12 +842,10 @@ async def sync_channel_message(c, m):
     if not SOURCE_CHANNEL or not TARGET_DESTINATIONS:
         return
     
-    # Determine source channel identifier (could be username or numeric ID)
     chat = m.chat
     source_match = False
     try:
         source_str = str(SOURCE_CHANNEL)
-        # Match by username (@name) or numeric ID
         if source_str.startswith('@') and chat.username:
             source_match = chat.username.lower() == source_str.lstrip('@').lower()
         else:
@@ -922,21 +859,16 @@ async def sync_channel_message(c, m):
     if not source_match:
         return
     
-    # Skip empty/deleted messages (Telegram sends empty message objects for deleted messages)
     if m.empty:
         return
     
     logger.info(f"Syncing channel message {m.id} from {chat.id} to {len(TARGET_DESTINATIONS)} targets")
     
-    # Copy to all target destinations
     for dest in list(TARGET_DESTINATIONS):
         try:
             sent = await m.copy(dest)
-            # Store mapping for edit/delete sync
             add_channel_message_mapping(m.id, sent.chat.id, sent.id)
-            # Mark as synced to prevent loops
             mark_message_as_synced(sent.chat.id, sent.id)
-            logger.debug(f"Copied channel message {m.id} to {dest} as {sent.id}")
         except Exception as e:
             logger.error(f"Failed to copy channel message to {dest}: {e}")
 
