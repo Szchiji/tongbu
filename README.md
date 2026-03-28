@@ -20,9 +20,9 @@
 ### 前置要求
 
 1. Telegram API 凭证：
-   - 访问 https://my.telegram.org/apps 获取 `API_ID` 和 `API_HASH`
    - 通过 [@BotFather](https://t.me/BotFather) 创建机器人获取 `BOT_TOKEN`
    - 获取你的用户 ID 作为 `OWNER_ID`（可通过 [@userinfobot](https://t.me/userinfobot) 获取）
+   - **无需** 获取 `API_ID` 和 `API_HASH`，机器人使用 Pyrogram 内置的默认 API
 
 2. Railway 账号：访问 https://railway.app 注册账号
 
@@ -38,8 +38,6 @@
    - 在项目中点击 "+ New" → "Database" → "Add Redis"
    - Railway 会自动将 `REDIS_URL` 注入到环境变量中
 6. 添加以下环境变量：
-   - `API_ID`：你的 Telegram API ID
-   - `API_HASH`：你的 Telegram API Hash
    - `BOT_TOKEN`：你的机器人 Token
    - `OWNER_ID`：你的 Telegram 用户 ID
    - `BASE_URL`：你的应用访问地址（如 `https://tongbu-xxx.up.railway.app`）
@@ -61,8 +59,6 @@ railway login
 railway init
 
 # 添加环境变量
-railway variables set API_ID=你的API_ID
-railway variables set API_HASH=你的API_HASH
 railway variables set BOT_TOKEN=你的BOT_TOKEN
 railway variables set OWNER_ID=你的用户ID
 railway variables set BASE_URL=https://你的应用地址.up.railway.app
@@ -75,8 +71,6 @@ railway up
 
 | 变量名 | 必需 | 说明 | 示例 |
 |--------|------|------|------|
-| `API_ID` | ✅ | Telegram API ID | `12345678` |
-| `API_HASH` | ✅ | Telegram API Hash | `0123456789abcdef0123456789abcdef` |
 | `BOT_TOKEN` | ✅ | 机器人 Token | `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11` |
 | `OWNER_ID` | ✅ | 主人用户 ID | `123456789` |
 | `BASE_URL` | ✅ | 后台访问地址（用于 Web 管理后台） | `https://tongbu-xxx.up.railway.app` |
@@ -213,7 +207,7 @@ Web 管理后台提供了友好的图形界面来管理机器人，支持移动�
 ### 机器人无法启动
 - 检查环境变量是否正确设置
 - 查看 Railway 日志确认错误信息
-- 确认 API_ID、API_HASH 和 BOT_TOKEN 有效
+- 确认 BOT_TOKEN 有效
 
 ### 消息不同步
 - 确认群组已添加到同步列表（使用 `/status` 检查）

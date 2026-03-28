@@ -36,9 +36,8 @@ if REDIS_URL:
 
 app_tg = Client(  # 改名，避免和 Flask 冲突
     "tg_sync_bot",
-    api_id=int(os.getenv("API_ID")),
-    api_hash=os.getenv("API_HASH"),
     bot_token=os.getenv("BOT_TOKEN", None)  # 不填就用用户号
+    # 使用 Pyrogram 内置的默认 API ID 和 Hash，无需配置 API_ID / API_HASH
 )
 
 SYNC_GROUPS = set()          # 自动保存同步群，无上限
