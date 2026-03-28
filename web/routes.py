@@ -57,15 +57,19 @@ def admin_required(f):
 def init_routes(app):
     """Initialize all admin routes"""
     from bot import SYNC_GROUPS, REQUIRED_CHANNELS, ADMINS, OWNER_ID, save_sync_groups, save_channels, save_admins, app_tg
+    from bot import SOURCE_CHANNEL, TARGET_DESTINATIONS, save_source_channel, save_target_destinations
     
     @app.route('/admin')
     @admin_required
     def admin_dashboard():
         """Admin dashboard"""
+        import bot as bot_module
         stats = {
             'groups': len(SYNC_GROUPS),
             'channels': len(REQUIRED_CHANNELS),
-            'admins': len(ADMINS)
+            'admins': len(ADMINS),
+            'source_channel': bot_module.SOURCE_CHANNEL,
+            'targets': len(bot_module.TARGET_DESTINATIONS)
         }
         return render_template('dashboard.html', 
                              stats=stats, 
@@ -278,3 +282,111 @@ def init_routes(app):
         session.clear()
         logger.info(f"Admin {admin_id} logged out")
         return "✓ 已退出登录，请关闭此页面", 200
+
+    @app.route('/admin/channel-sync')
+    @admin_required
+    def admin_channel_sync():
+        """Channel sync management page"""
+        import bot as bot_module
+        message = session.pop('message', None)
+        message_type = session.pop('message_type', None)
+        return render_template('channel_sync.html',
+                             source_channel=bot_module.SOURCE_CHANNEL,
+                             targets=list(bot_module.TARGET_DESTINATIONS),
+                             message=message,
+                             message_type=message_type)
+
+    @app.route('/admin/channel-sync/set-source', methods=['POST'])
+    @admin_required
+    def admin_channel_sync_set_source():
+        """Set the source channel"""
+        import bot as bot_module
+        channel = request.form.get('channel', '').strip()
+        if not channel:
+            session['message'] = "❌ 频道不能为空！"
+            session['message_type'] = 'error'
+        else:
+            bot_module.SOURCE_CHANNEL = channel
+            save_source_channel()
+            session['message'] = f"✓ 已设置主频道为：{channel}"
+            session['message_type'] = 'success'
+            logger.info(f"Admin {session.get('admin_id')} set source channel to {channel}")
+        return redirect(url_for('admin_channel_sync'))
+
+    @app.route('/admin/channel-sync/clear-source', methods=['POST'])
+    @admin_required
+    def admin_channel_sync_clear_source():
+        """Clear the source channel"""
+        import bot as bot_module
+        bot_module.SOURCE_CHANNEL = None
+        save_source_channel()
+        session['message'] = "✓ 已清除主频道设置"
+        session['message_type'] = 'success'
+        logger.info(f"Admin {session.get('admin_id')} cleared source channel")
+        return redirect(url_for('admin_channel_sync'))
+
+    @app.route('/admin/channel-sync/add-target', methods=['POST'])
+    @admin_required
+    def admin_channel_sync_add_target():
+        """Add a target destination"""
+        import bot as bot_module
+        target = request.form.get('target', '').strip()
+        if not target:
+            session['message'] = "❌ 目标不能为空！"
+            session['message_type'] = 'error'
+        else:
+            # Try to convert to int if it's a numeric ID
+            try:
+                target = int(target)
+            except ValueError:
+                pass
+            if target in bot_module.TARGET_DESTINATIONS:
+                session['message'] = f"目标 {target} 已存在！"
+                session['message_type'] = 'warning'
+            else:
+                bot_module.TARGET_DESTINATIONS.append(target)
+                save_target_destinations()
+                session['message'] = f"✓ 已添加目标：{target}"
+                session['message_type'] = 'success'
+                logger.info(f"Admin {session.get('admin_id')} added target {target}")
+        return redirect(url_for('admin_channel_sync'))
+
+    @app.route('/admin/channel-sync/remove-target', methods=['POST'])
+    @admin_required
+    def admin_channel_sync_remove_target():
+        """Remove a target destination"""
+        import bot as bot_module
+        target = request.form.get('target', '').strip()
+        # Try int and string versions
+        removed = False
+        try:
+            target_int = int(target)
+            if target_int in bot_module.TARGET_DESTINATIONS:
+                bot_module.TARGET_DESTINATIONS.remove(target_int)
+                removed = True
+        except (ValueError, TypeError):
+            pass
+        if not removed and target in bot_module.TARGET_DESTINATIONS:
+            bot_module.TARGET_DESTINATIONS.remove(target)
+            removed = True
+        if removed:
+            save_target_destinations()
+            session['message'] = f"✓ 已删除目标：{target}"
+            session['message_type'] = 'success'
+            logger.info(f"Admin {session.get('admin_id')} removed target {target}")
+        else:
+            session['message'] = "目标不存在！"
+            session['message_type'] = 'warning'
+        return redirect(url_for('admin_channel_sync'))
+
+    @app.route('/admin/channel-sync/clear-targets', methods=['POST'])
+    @admin_required
+    def admin_channel_sync_clear_targets():
+        """Clear all target destinations"""
+        import bot as bot_module
+        bot_module.TARGET_DESTINATIONS.clear()
+        save_target_destinations()
+        session['message'] = "✓ 已清空所有目标"
+        session['message_type'] = 'success'
+        logger.info(f"Admin {session.get('admin_id')} cleared all targets")
+        return redirect(url_for('admin_channel_sync'))

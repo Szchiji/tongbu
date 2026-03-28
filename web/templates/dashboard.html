@@ -19,6 +19,10 @@
             <h3>管理员数</h3>
             <div class="value">{{ stats.admins }}</div>
         </div>
+        <div class="stat-card">
+            <h3>同步目标</h3>
+            <div class="value">{{ stats.targets }}</div>
+        </div>
     </div>
 </div>
 
@@ -27,6 +31,13 @@
     <div style="line-height: 1.8;">
         <p><strong>管理员 ID：</strong>{{ admin_id }}</p>
         <p><strong>机器人状态：</strong><span style="color: #27ae60;">✓ 运行中</span></p>
+        <p><strong>主频道（源）：</strong>
+            {% if stats.source_channel %}
+                <span style="color: #4a90e2;">{{ stats.source_channel }}</span>
+            {% else %}
+                <span style="color: #888;">未设置</span>
+            {% endif %}
+        </p>
     </div>
 </div>
 
@@ -35,6 +46,7 @@
     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
         <a href="/admin/groups"><button class="btn">管理群组</button></a>
         <a href="/admin/channels"><button class="btn">管理频道</button></a>
+        <a href="/admin/channel-sync"><button class="btn">📡 频道同步</button></a>
         <a href="/admin/admins"><button class="btn">管理管理员</button></a>
     </div>
 </div>
