@@ -115,6 +115,7 @@ def load_data():
     imports these variables at init time, and reassigning them would cause
     the routes to use stale references.
     """
+    global SOURCE_CHANNEL
     if r:
         # Load from Redis
         try:
@@ -143,7 +144,6 @@ def load_data():
                 REQUIRED_CHANNELS.extend(json.loads(channels_data))
             
             # Load source channel
-            global SOURCE_CHANNEL
             source_channel_data = r.get("source_channel")
             if source_channel_data:
                 SOURCE_CHANNEL = json.loads(source_channel_data)
@@ -181,7 +181,6 @@ def load_data():
                     ADMINS.extend(loaded_admins)
                     
                     # Load source channel
-                    global SOURCE_CHANNEL
                     SOURCE_CHANNEL = json_data.get('source_channel', None)
                     
                     # Load target destinations (in-place update to preserve references)
