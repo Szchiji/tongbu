@@ -45,6 +45,10 @@ SYNC_GROUPS = set()          # 自动保存同步群，无上限
 REQUIRED_CHANNELS = []       # 强制关注的频道列表
 WELCOME_TEXT = "欢迎！请先关注以下频道才能发言，关注完成后自动解禁～"
 
+# —— 频道同步配置 ——
+SOURCE_CHANNEL = None        # 主频道（源频道）
+TARGET_DESTINATIONS = []     # 目标频道/群组列表
+
 # 管理员列表（初始只放您的 OWNER_ID）
 OWNER_ID = int(os.getenv("OWNER_ID"))
 ADMINS = [OWNER_ID]  # 支持多个，动态添加
@@ -55,6 +59,10 @@ BOT_ID = None
 # Message ID mapping: {original_chat_id:original_msg_id: {target_chat_id: target_msg_id, ...}}
 MESSAGE_MAPPING = {}
 MESSAGE_MAPPING_COUNTER = 0  # Counter for periodic saves
+
+# Channel message ID mapping: {original_msg_id: {target_chat_id: target_msg_id, ...}}
+CHANNEL_MESSAGE_MAPPING = {}
+CHANNEL_MESSAGE_MAPPING_COUNTER = 0  # Counter for periodic saves
 
 # Track synced message IDs to prevent re-syncing
 # Format: {"chat_id:msg_id": timestamp}
@@ -88,6 +96,16 @@ def save_admins():
 def save_channels():
     """Save channels to Redis or JSON file"""
     if not save_to_redis("channels", REQUIRED_CHANNELS):
+        save_data()
+
+def save_source_channel():
+    """Save source channel to Redis or JSON file"""
+    if not save_to_redis("source_channel", SOURCE_CHANNEL):
+        save_data()
+
+def save_target_destinations():
+    """Save target destinations to Redis or JSON file"""
+    if not save_to_redis("target_destinations", TARGET_DESTINATIONS):
         save_data()
 
 def load_data():
@@ -125,7 +143,21 @@ def load_data():
             if channels_data:
                 REQUIRED_CHANNELS.extend(json.loads(channels_data))
             
-            logger.info(f"Loaded data from Redis: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins")
+            # Load source channel
+            global SOURCE_CHANNEL
+            source_channel_data = r.get("source_channel")
+            if source_channel_data:
+                SOURCE_CHANNEL = json.loads(source_channel_data)
+            else:
+                SOURCE_CHANNEL = None
+            
+            # Load target destinations (in-place update to preserve references)
+            target_data = r.get("target_destinations")
+            TARGET_DESTINATIONS.clear()
+            if target_data:
+                TARGET_DESTINATIONS.extend(json.loads(target_data))
+            
+            logger.info(f"Loaded data from Redis: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins, source_channel={SOURCE_CHANNEL}, {len(TARGET_DESTINATIONS)} targets")
         except Exception as e:
             logger.error(f"Error loading data from Redis: {e}")
             # Keep existing data on error (don't clear)
@@ -149,7 +181,15 @@ def load_data():
                         loaded_admins.append(OWNER_ID)
                     ADMINS.extend(loaded_admins)
                     
-                    logger.info(f"Loaded data from JSON: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins")
+                    # Load source channel
+                    global SOURCE_CHANNEL
+                    SOURCE_CHANNEL = json_data.get('source_channel', None)
+                    
+                    # Load target destinations (in-place update to preserve references)
+                    TARGET_DESTINATIONS.clear()
+                    TARGET_DESTINATIONS.extend(json_data.get('target_destinations', []))
+                    
+                    logger.info(f"Loaded data from JSON: {len(SYNC_GROUPS)} groups, {len(REQUIRED_CHANNELS)} channels, {len(ADMINS)} admins, source_channel={SOURCE_CHANNEL}, {len(TARGET_DESTINATIONS)} targets")
             else:
                 logger.info("No data file found, starting with defaults")
         except Exception as e:
@@ -162,7 +202,9 @@ def save_data():
         data = {
             'sync_groups': list(SYNC_GROUPS),
             'required_channels': REQUIRED_CHANNELS,
-            'admins': ADMINS
+            'admins': ADMINS,
+            'source_channel': SOURCE_CHANNEL,
+            'target_destinations': TARGET_DESTINATIONS
         }
         with open(DATA_FILE, 'w') as f:
             json.dump(data, f, indent=2)
@@ -235,6 +277,57 @@ def cleanup_old_mappings(max_entries=10000):
             del MESSAGE_MAPPING[key]
         save_message_mapping()
         logger.info(f"Cleaned up {len(keys_to_remove)} old message mappings")
+
+# —— Channel Message Mapping Functions ——
+CHANNEL_MAP_FILE = "channel_message_mapping.json"
+
+def load_channel_message_mapping():
+    """Load channel message mapping from JSON file"""
+    global CHANNEL_MESSAGE_MAPPING
+    try:
+        if os.path.exists(CHANNEL_MAP_FILE):
+            with open(CHANNEL_MAP_FILE, 'r') as f:
+                CHANNEL_MESSAGE_MAPPING = json.load(f)
+                logger.info(f"Loaded {len(CHANNEL_MESSAGE_MAPPING)} channel message mappings")
+        else:
+            logger.info("No channel message mapping file found, starting fresh")
+    except Exception as e:
+        logger.error(f"Error loading channel message mapping: {e}")
+        CHANNEL_MESSAGE_MAPPING = {}
+
+def save_channel_message_mapping():
+    """Save channel message mapping to JSON file"""
+    try:
+        with open(CHANNEL_MAP_FILE, 'w') as f:
+            json.dump(CHANNEL_MESSAGE_MAPPING, f)
+        logger.debug("Channel message mapping saved")
+    except Exception as e:
+        logger.error(f"Error saving channel message mapping: {e}")
+
+def add_channel_message_mapping(original_msg_id, target_chat_id, target_msg_id):
+    """Add a channel message ID mapping"""
+    global CHANNEL_MESSAGE_MAPPING_COUNTER
+    key = str(original_msg_id)
+    if key not in CHANNEL_MESSAGE_MAPPING:
+        CHANNEL_MESSAGE_MAPPING[key] = {}
+    CHANNEL_MESSAGE_MAPPING[key][str(target_chat_id)] = int(target_msg_id)
+    # Save periodically (every 5 new mappings) to reduce risk of data loss
+    CHANNEL_MESSAGE_MAPPING_COUNTER += 1
+    if CHANNEL_MESSAGE_MAPPING_COUNTER >= 5:
+        save_channel_message_mapping()
+        CHANNEL_MESSAGE_MAPPING_COUNTER = 0
+
+def get_channel_message_mapping(original_msg_id):
+    """Get channel message ID mappings for an original message"""
+    key = str(original_msg_id)
+    return CHANNEL_MESSAGE_MAPPING.get(key, {})
+
+def delete_channel_message_mapping(original_msg_id):
+    """Delete a channel message ID mapping"""
+    key = str(original_msg_id)
+    if key in CHANNEL_MESSAGE_MAPPING:
+        del CHANNEL_MESSAGE_MAPPING[key]
+        save_channel_message_mapping()
 
 # —— Synced Message Tracking Functions ——
 def mark_message_as_synced(chat_id, msg_id):
@@ -315,9 +408,16 @@ async def help_cmd(c, m):
 • `/removegroup -100群ID` - 从同步列表移除群组
 • `/addall` - 添加机器人所在的所有群组
 
-**频道管理：**
+**频道管理（强制关注）：**
 • `/setchannel @频道1 @频道2` - 设置强制关注频道
 • `/setchannel` - 清空强制关注频道
+
+**📡 频道同步：**
+• `/setsourcechannel @频道` - 设置主频道（源频道）
+• `/addtarget @频道或群ID` - 添加目标频道/群组
+• `/removetarget @频道或群ID` - 删除目标频道/群组
+• `/listtargets` - 查看所有目标
+• `/syncchannel` - 查看当前频道同步配置
 
 **管理员管理：**
 • `/addadmin 用户ID` 或 `/addadmin @用户名` - 添加管理员
@@ -430,7 +530,86 @@ async def set_channels(c, m):
 
 @app_tg.on_message(filters.private & filters.command("status") & filters.user(ADMINS))
 async def status(c, m):
-    await m.reply(f"同步群数量：{len(SYNC_GROUPS)}\n强制频道：{REQUIRED_CHANNELS or '无'}\n管理员：{ADMINS}")
+    await m.reply(
+        f"同步群数量：{len(SYNC_GROUPS)}\n"
+        f"强制频道：{REQUIRED_CHANNELS or '无'}\n"
+        f"管理员：{ADMINS}\n"
+        f"主频道：{SOURCE_CHANNEL or '未设置'}\n"
+        f"目标数量：{len(TARGET_DESTINATIONS)}"
+    )
+
+# —— 频道同步管理命令 ——
+@app_tg.on_message(filters.private & filters.command("setsourcechannel") & filters.user(ADMINS))
+async def set_source_channel(c, m):
+    global SOURCE_CHANNEL
+    parts = m.text.split()
+    if len(parts) < 2:
+        return await m.reply("用法: /setsourcechannel @频道名 或 -100频道ID\n💡 将此频道设为主频道（源频道）")
+    channel = parts[1]
+    SOURCE_CHANNEL = channel
+    save_source_channel()
+    await m.reply(f"✓ 已设置主频道为：{channel}")
+
+@app_tg.on_message(filters.private & filters.command("addtarget") & filters.user(ADMINS))
+async def add_target(c, m):
+    parts = m.text.split()
+    if len(parts) < 2:
+        return await m.reply("用法: /addtarget @频道或群组 或 -100ID\n💡 添加目标频道/群组")
+    target = parts[1]
+    # Try to convert to int if it looks like a numeric ID
+    try:
+        target = int(target)
+    except ValueError:
+        pass  # Keep as string (username)
+    if target in TARGET_DESTINATIONS:
+        return await m.reply(f"目标 {target} 已在列表中！")
+    TARGET_DESTINATIONS.append(target)
+    save_target_destinations()
+    await m.reply(f"✓ 已添加目标：{target}（当前共 {len(TARGET_DESTINATIONS)} 个）")
+
+@app_tg.on_message(filters.private & filters.command("removetarget") & filters.user(ADMINS))
+async def remove_target(c, m):
+    parts = m.text.split()
+    if len(parts) < 2:
+        return await m.reply("用法: /removetarget @频道或群组 或 -100ID")
+    target = parts[1]
+    # Try to convert to int if it looks like a numeric ID
+    try:
+        target_int = int(target)
+        # Remove either the int or string version
+        if target_int in TARGET_DESTINATIONS:
+            TARGET_DESTINATIONS.remove(target_int)
+            save_target_destinations()
+            return await m.reply(f"✓ 已删除目标：{target}（剩余 {len(TARGET_DESTINATIONS)} 个）")
+    except ValueError:
+        pass
+    if target in TARGET_DESTINATIONS:
+        TARGET_DESTINATIONS.remove(target)
+        save_target_destinations()
+        await m.reply(f"✓ 已删除目标：{target}（剩余 {len(TARGET_DESTINATIONS)} 个）")
+    else:
+        await m.reply(f"目标 {target} 不在列表中！")
+
+@app_tg.on_message(filters.private & filters.command("listtargets") & filters.user(ADMINS))
+async def list_targets(c, m):
+    if not TARGET_DESTINATIONS:
+        return await m.reply("目标列表为空。使用 /addtarget 添加目标频道/群组。")
+    target_list = "\n".join(f"• {t}" for t in TARGET_DESTINATIONS)
+    await m.reply(f"📋 **目标频道/群组列表（共 {len(TARGET_DESTINATIONS)} 个）：**\n\n{target_list}")
+
+@app_tg.on_message(filters.private & filters.command("syncchannel") & filters.user(ADMINS))
+async def sync_channel_status(c, m):
+    source = SOURCE_CHANNEL or "未设置"
+    if TARGET_DESTINATIONS:
+        target_list = "\n".join(f"  • {t}" for t in TARGET_DESTINATIONS)
+    else:
+        target_list = "  （未设置）"
+    await m.reply(
+        f"📡 **频道同步配置**\n\n"
+        f"**主频道（源）：** {source}\n\n"
+        f"**目标列表（{len(TARGET_DESTINATIONS)} 个）：**\n{target_list}\n\n"
+        f"💡 使用 /setsourcechannel 设置主频道，/addtarget 添加目标"
+    )
 
 # —— Web 管理后台入口 ——
 @app_tg.on_message(filters.private & filters.command("admin"))
@@ -713,6 +892,148 @@ async def sync_delete(c, messages):
         except Exception as e:
             logger.error(f"Delete sync failed to {gid}: {e}")
 
+# —— 频道消息同步（主频道 → 目标频道/群组）——
+@app_tg.on_message(filters.channel)
+async def sync_channel_message(c, m):
+    """Sync messages from the source channel to all target destinations"""
+    if not SOURCE_CHANNEL or not TARGET_DESTINATIONS:
+        return
+    
+    # Determine source channel identifier (could be username or numeric ID)
+    chat = m.chat
+    source_match = False
+    try:
+        source_str = str(SOURCE_CHANNEL)
+        # Match by username (@name) or numeric ID
+        if source_str.startswith('@') and chat.username:
+            source_match = chat.username.lower() == source_str.lstrip('@').lower()
+        else:
+            try:
+                source_match = chat.id == int(source_str)
+            except ValueError:
+                pass
+    except Exception:
+        pass
+    
+    if not source_match:
+        return
+    
+    # Skip empty/deleted messages (Telegram sends empty message objects for deleted messages)
+    if m.empty:
+        return
+    
+    logger.info(f"Syncing channel message {m.id} from {chat.id} to {len(TARGET_DESTINATIONS)} targets")
+    
+    # Copy to all target destinations
+    for dest in list(TARGET_DESTINATIONS):
+        try:
+            sent = await m.copy(dest)
+            # Store mapping for edit/delete sync
+            add_channel_message_mapping(m.id, sent.chat.id, sent.id)
+            # Mark as synced to prevent loops
+            mark_message_as_synced(sent.chat.id, sent.id)
+            logger.debug(f"Copied channel message {m.id} to {dest} as {sent.id}")
+        except Exception as e:
+            logger.error(f"Failed to copy channel message to {dest}: {e}")
+
+@app_tg.on_edited_message(filters.channel)
+async def sync_channel_edit(c, m):
+    """Sync edited messages from the source channel to all target destinations"""
+    if not SOURCE_CHANNEL or not TARGET_DESTINATIONS:
+        return
+    
+    chat = m.chat
+    source_match = False
+    try:
+        source_str = str(SOURCE_CHANNEL)
+        if source_str.startswith('@') and chat.username:
+            source_match = chat.username.lower() == source_str.lstrip('@').lower()
+        else:
+            try:
+                source_match = chat.id == int(source_str)
+            except ValueError:
+                pass
+    except Exception:
+        pass
+    
+    if not source_match:
+        return
+    
+    mapping = get_channel_message_mapping(m.id)
+    
+    for dest in list(TARGET_DESTINATIONS):
+        try:
+            # Resolve dest to a numeric chat_id if needed
+            try:
+                dest_id = int(dest)
+            except (ValueError, TypeError):
+                dest_id = dest
+            
+            target_msg_id = mapping.get(str(dest_id))
+            if target_msg_id:
+                try:
+                    if m.media:
+                        await c.edit_message_caption(
+                            chat_id=dest_id,
+                            message_id=target_msg_id,
+                            caption=m.caption or ""
+                        )
+                    elif m.text:
+                        await c.edit_message_text(
+                            chat_id=dest_id,
+                            message_id=target_msg_id,
+                            text=m.text
+                        )
+                    else:
+                        raise Exception("Cannot edit message: only text and media messages with captions are supported")
+                    logger.info(f"Edited channel message {target_msg_id} in {dest_id}")
+                except Exception as e:
+                    logger.warning(f"Channel edit failed for {dest_id}, copying as new: {e}")
+                    try:
+                        sent = await m.copy(dest)
+                        add_channel_message_mapping(m.id, sent.chat.id, sent.id)
+                        mark_message_as_synced(sent.chat.id, sent.id)
+                    except Exception as copy_e:
+                        logger.error(f"Copy failed to {dest}: {copy_e}")
+            else:
+                # No mapping, copy as new
+                try:
+                    sent = await m.copy(dest)
+                    add_channel_message_mapping(m.id, sent.chat.id, sent.id)
+                    mark_message_as_synced(sent.chat.id, sent.id)
+                except Exception as copy_e:
+                    logger.error(f"Copy failed to {dest}: {copy_e}")
+        except Exception as e:
+            logger.error(f"Channel edit sync failed to {dest}: {e}")
+
+@app_tg.on_deleted_messages(filters.channel)
+async def sync_channel_delete(c, messages):
+    """Sync deleted messages from the source channel to all target destinations"""
+    if not SOURCE_CHANNEL or not TARGET_DESTINATIONS or not messages:
+        return
+    
+    delete_targets = {}  # {target_chat_id: [msg_ids]}
+    
+    for m in messages:
+        mapping = get_channel_message_mapping(m.id)
+        if mapping:
+            for dest_str, target_msg_id in mapping.items():
+                try:
+                    dest_id = int(dest_str)
+                except ValueError:
+                    dest_id = dest_str
+                if dest_id not in delete_targets:
+                    delete_targets[dest_id] = []
+                delete_targets[dest_id].append(target_msg_id)
+            delete_channel_message_mapping(m.id)
+    
+    for dest_id, msg_ids in delete_targets.items():
+        try:
+            await c.delete_messages(dest_id, msg_ids)
+            logger.info(f"Deleted {len(msg_ids)} synced channel message(s) in {dest_id}")
+        except Exception as e:
+            logger.error(f"Channel delete sync failed to {dest_id}: {e}")
+
 # 新增：Flask HTTP 服务器，让 Render Web Service 检测到端口
 flask_app = Flask(__name__, template_folder='web/templates')
 
@@ -743,6 +1064,7 @@ def graceful_shutdown():
     logger.info("正在保存数据...")
     save_data()
     save_message_mapping()
+    save_channel_message_mapping()
     logger.info("数据保存完成，机器人关闭")
 
 # Register atexit handler
@@ -754,6 +1076,7 @@ if __name__ == "__main__":
     
     # Load message mappings
     load_message_mapping()
+    load_channel_message_mapping()
     
     # Clean up old mappings if too many
     cleanup_old_mappings()
